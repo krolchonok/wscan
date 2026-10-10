@@ -31,3 +31,14 @@ true;`, ""},
 		})
 	}
 }
+
+func TestCheckSourceNestedDeclarations(t *testing.T) {
+	source := `require("nuclei/oracle");`
+	for i := 0; i < 24; i++ {
+		source = "var nested = function(){" + source + "};"
+	}
+	reasons := CheckSource(source)
+	if len(reasons) != 1 || !strings.Contains(reasons[0], "not implemented") {
+		t.Fatalf("nested import was missed: %v", reasons)
+	}
+}

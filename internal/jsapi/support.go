@@ -49,7 +49,7 @@ func CheckSource(source string) []string {
 		return []string{"JavaScript syntax: " + err.Error()}
 	}
 	reasons := map[string]bool{}
-	walk(reflect.ValueOf(program), func(call *ast.CallExpression) {
+	walk(reflect.ValueOf(program), map[uintptr]bool{}, func(call *ast.CallExpression) {
 		name, ok := call.Callee.(*ast.Identifier)
 		if !ok || name.Name.String() != "require" {
 			return
@@ -77,7 +77,7 @@ func CheckSource(source string) []string {
 
 // goja has no public AST visitor. Traverse only AST structs, skipping file and
 // source metadata; this also catches require() inside functions and branches.
-func walk(v reflect.Value, visit func(*ast.CallExpression)) {
+func walk(v reflect.Value, seen map[uintptr]bool, visit func(*ast.CallExpression)) {
 	if !v.IsValid() {
 		return
 	}
@@ -86,22 +86,31 @@ func walk(v reflect.Value, visit func(*ast.CallExpression)) {
 		if v.IsNil() {
 			return
 		}
+		if v.Kind() == reflect.Pointer {
+			// Declaration lists can reference the same AST nodes as the body.
+			// Visit each pointer once, keeping nested-function checks linear.
+			pointer := v.Pointer()
+			if seen[pointer] {
+				return
+			}
+			seen[pointer] = true
+		}
 		if v.CanInterface() {
 			if call, ok := v.Interface().(*ast.CallExpression); ok {
 				visit(call)
 			}
 		}
-		walk(v.Elem(), visit)
+		walk(v.Elem(), seen, visit)
 	case reflect.Struct:
 		if v.Type().PkgPath() != "github.com/dop251/goja/ast" {
 			return
 		}
 		for i := 0; i < v.NumField(); i++ {
-			walk(v.Field(i), visit)
+			walk(v.Field(i), seen, visit)
 		}
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < v.Len(); i++ {
-			walk(v.Index(i), visit)
+			walk(v.Index(i), seen, visit)
 		}
 	}
 }
