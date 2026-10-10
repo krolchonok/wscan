@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/flozz/p0wny-shell",
+  "release": "v2023.08.10",
+  "release_url": "https://github.com/flozz/p0wny-shell/releases/tag/v2023.08.10",
+  "asset": "shell.php",
+  "url": "https://raw.githubusercontent.com/flozz/p0wny-shell/v2023.08.10/shell.php",
+  "sha256": "b3579bb886c6e511f1dc921bd082fec18a8a9cb1b3109d22f15a0c6a55e4d19a",
+  "size": 20321
+}

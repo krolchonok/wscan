@@ -1,0 +1,46 @@
+name: Release Linux amd64
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Restore full runtime library from initial private release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/baseline library
+          gh release download v0.1.0 --dir dist/baseline --pattern wscan-v0.1.0-linux-amd64.tar.gz --pattern wscan-v0.1.0-linux-amd64.tar.gz.sha256
+          (cd dist/baseline && sha256sum -c wscan-v0.1.0-linux-amd64.tar.gz.sha256)
+          tar -xzf dist/baseline/wscan-v0.1.0-linux-amd64.tar.gz -C library --strip-components=2 wscan-linux-amd64/library
+      - name: Test
+        id: tests
+        continue-on-error: true
+        run: CGO_ENABLED=0 go test ./...
+      - name: Download verified Nuclei
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/nuclei-download
+          gh release download v3.11.1 --repo projectdiscovery/nuclei --dir dist/nuclei-download --pattern nuclei_3.11.1_linux_amd64.zip --pattern nuclei_3.11.1_checksums.txt
+          cd dist/nuclei-download
+          grep ' nuclei_3.11.1_linux_amd64.zip$' nuclei_3.11.1_checksums.txt > selected.sha256
+          sha256sum -c selected.sha256
+          unzip nuclei_3.11.1_linux_amd64.zip nuclei -d ../../bin
+          chmod +x ../../bin/nuclei
+      - name: Package
+        run: ./scripts/package-linux-amd64.sh "$GITHUB_REF_NAME"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf 'Linux x86-64. Full test suite: %s. See docs/KNOWN_TEST_FAILURES.md for baseline limitations.\n' '${{ steps.tests.outcome }}' > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$GITHUB_REF_NAME" dist/wscan-*.tar.gz dist/wscan-*.sha256 --verify-tag --prerelease --notes-file "$RUNNER_TEMP/release-notes.md"

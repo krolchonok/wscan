@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/peass-ng/PEASS-ng",
+  "release": "20261005-c6b483d8",
+  "release_url": "https://github.com/peass-ng/PEASS-ng/releases/tag/20261005-c6b483d8",
+  "asset": "winPEASany.exe",
+  "url": "https://github.com/peass-ng/PEASS-ng/releases/download/20261005-c6b483d8/winPEASany.exe",
+  "sha256": "349b9d1e4f9f74ee7582fdd620c0b111e7ea9dce2e3f902cf0491710d5390c8d",
+  "size": 11373568
+}
