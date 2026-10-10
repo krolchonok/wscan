@@ -14,8 +14,12 @@ mkdir -p "$BUNDLE/bin" "$OUT_DIR"
 (cd "$ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$BUNDLE/wscan" .)
 cp "$NUCLEI_SOURCE" "$BUNDLE/bin/nuclei"
 cp "$ROOT/bin/nuclei.LICENSE.md" "$ROOT/bin/README.md" "$BUNDLE/bin/"
-# Copy runtime library without Git history or Python caches.
-(cd "$LIBRARY_SOURCE" && tar --exclude=.git --exclude=__pycache__ -cf - .) | (mkdir -p "$BUNDLE/library" && cd "$BUNDLE/library" && tar -xf -)
+# Include only runtime checks, indexes and coverage documentation.
+mkdir -p "$BUNDLE/library"
+for entry in nuclei-templates nmap categories.json products.json MANIFEST.json README.md security; do
+  test -e "$LIBRARY_SOURCE/$entry" || continue
+  (cd "$LIBRARY_SOURCE" && tar --exclude=.git --exclude=__pycache__ -cf - "$entry") | (cd "$BUNDLE/library" && tar -xf -)
+done
 cp -a "$ROOT/tools" "$BUNDLE/tools"
 cp "$ROOT/docs/TRANSFER.md" "$BUNDLE/README-TRANSFER.md"
 cp "$ROOT/docs/KNOWN_TEST_FAILURES.md" "$BUNDLE/KNOWN_TEST_FAILURES.md"
