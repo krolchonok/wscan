@@ -1,9 +1,6 @@
-# Nuclei
+# Внешние бинарники не используются
 
-Официальный Nuclei v3.11.1 для Linux amd64.
-
-Источник: https://github.com/projectdiscovery/nuclei/releases/tag/v3.11.1
-
-Архив `nuclei_3.11.1_linux_amd64.zip` проверен по SHA-256 из опубликованного `nuclei_3.11.1_checksums.txt` перед распаковкой.
-
-Nmap используется из PATH с библиотекой `library/nmap/`.
+wscan исполняет YAML-шаблоны своим Go/JavaScript-движком, а NSE — встроенным Lua.
+Бинарники Nuclei и Nmap не нужны и не включаются в релизы начиная с v0.1.1.
+Файлы лицензии и контрольных сумм Nuclei оставлены как сведения о прежнем комплекте.
+Обычные утилиты ОС и интерпретаторы разрешены; подробности — в docs/ENGINE_POLICY_AUDIT.md.

