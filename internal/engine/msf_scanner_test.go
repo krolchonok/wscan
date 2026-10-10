@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,8 +77,17 @@ func fakeListener(t *testing.T, resp []byte) int {
 
 func runMSF(t *testing.T, tmpl domain.Template) *Result {
 	t.Helper()
+	target := "127.0.0.1"
+	// Synthetic listeners are explicit scan targets; template args must not
+	// override the selected service in production.
+	for _, request := range tmpl.JavaScript {
+		if port, ok := request.Args["Port"]; ok {
+			target = fmt.Sprintf("http://127.0.0.1:%v", port)
+			break
+		}
+	}
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{tmpl})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{target}}, []domain.Template{tmpl})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"wscan/internal/jsapi"
 )
 
 const defaultDialTimeout = 5 * time.Second
@@ -439,6 +440,9 @@ func install(vm *goja.Runtime, ctx context.Context, timeout time.Duration, libra
 }
 
 func module(vm *goja.Runtime, ctx context.Context, timeout time.Duration, libraryDir, name string) (goja.Value, error) {
+	if err := jsapi.ModuleError(name); err != nil {
+		return nil, err
+	}
 	switch strings.TrimPrefix(name, "./") {
 	case "nuclei/net":
 		return netModule(vm, ctx, timeout), nil
@@ -464,18 +468,9 @@ func module(vm *goja.Runtime, ctx context.Context, timeout time.Duration, librar
 		return rdpModule(vm, ctx, timeout), nil
 	case "nuclei/ldap":
 		return ldapModule(vm, ctx, timeout), nil
-	case "nuclei/oracle", "nuclei/rsync", "nuclei/smtp":
-		return stubModule(vm, name), nil
 	default:
 		return nil, fmt.Errorf("unknown module %q", name)
 	}
-}
-
-func stubModule(vm *goja.Runtime, name string) goja.Value {
-	obj := vm.NewObject()
-	_ = obj.Set("__name", name)
-	_ = obj.Set("__stub", true)
-	return obj
 }
 
 func dialOpen(ctx context.Context, network, host, port string, timeout time.Duration) bool {

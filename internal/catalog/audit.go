@@ -32,6 +32,7 @@ func (c *Catalog) Audit(output string) error {
 	}
 	total, available := map[string]int{}, map[string]int{}
 	nuclei, nse := 0, 0
+	reasons := map[string]int{}
 	for _, e := range entries {
 		d := Direction(e)
 		total[d]++
@@ -42,22 +43,48 @@ func (c *Catalog) Audit(output string) error {
 			} else {
 				nuclei++
 			}
+		} else {
+			reason := e.Reason
+			if reason == "" {
+				reason = e.NetworkReason
+			}
+			if reason == "" {
+				reason = "not compatible"
+			}
+			reasons[reason]++
 		}
+	}
+	summary := struct {
+		Mode                     string         `json:"mode"`
+		Total                    int            `json:"total"`
+		NativeCompatible         int            `json:"native_compatible"`
+		Unavailable              int            `json:"unavailable"`
+		YAMLCompatible           int            `json:"yaml_compatible"`
+		NSECompatible            int            `json:"nse_compatible"`
+		TargetExecutionsVerified int            `json:"target_executions_verified"`
+		Reasons                  map[string]int `json:"unavailable_reasons"`
+	}{"native-offline", len(entries), nuclei + nse, len(entries) - nuclei - nse, nuclei, nse, 0, reasons}
+	data, err = json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = os.WriteFile(filepath.Join(output, "summary.json"), data, 0600); err != nil {
+		return err
 	}
 	var names []string
 	for name := range total {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	body := fmt.Sprintf("# Проверка библиотеки\n\nПроверено: %d. Nuclei загружаются: %d. NSE загружаются: %d.\n\n", len(entries), nuclei, nse)
-	body += "Цели не сканировались. При наличии полных движков Nuclei проверен через -tl, NSE — через Nmap --script-help с библиотекой nselib. Без них используется ограниченный встроенный парсер. Это проверка загрузки, не выполнение проверок на цели; аргументы, доступы и зависимости могут потребоваться при запуске. Workflows и служебные YAML не являются отдельными исполняемыми проверками и не входят в каталог.\n\n| Сервис | Доступно | Всего |\n|---|---:|---:|\n"
+	body := fmt.Sprintf("# Совместимость библиотеки с нашим движком\n\nВсего проверок: %d. YAML совместимы: %d. NSE совместимы офлайн: %d. Недоступно: %d.\n\n", len(entries), nuclei, nse, len(entries)-nuclei-nse)
+	body += "Это офлайн-проверка парсинга, поддержанных возможностей и импорта NSE. Внешние Nuclei, Nmap и Metasploit не запускались. Проверок на целях выполнено: **0**. Совместимость не подтверждает выполнение каждого API, наличие доступа, выполнение pre-condition или обнаружение уязвимости. code: требует интерпретатор и отдельное разрешение проекта. Workflows и служебные YAML не входят в каталог отдельных проверок.\n\n| Сервис | Совместимо офлайн | Всего |\n|---|---:|---:|\n"
 	for _, name := range names {
 		body += fmt.Sprintf("| %s | %d | %d |\n", name, available[name], total[name])
 	}
-	body += "\nПричины недоступности каждого шаблона: compatibility.json.\n"
+	body += "\nОбщие числа и причины: summary.json. Причины недоступности каждого шаблона: compatibility.json.\n"
 	if err = os.WriteFile(filepath.Join(output, "README.md"), []byte(body), 0600); err != nil {
 		return err
 	}
-	fmt.Printf("Проверено %d: Nuclei %d загружаются, NSE %d загружаются. Отчёт: %s\n", len(entries), nuclei, nse, output)
+	fmt.Printf("Офлайн проверено %d: YAML совместимы %d, NSE совместимы офлайн %d; на целях выполнено 0. Отчёт: %s\n", len(entries), nuclei, nse, output)
 	return nil
 }

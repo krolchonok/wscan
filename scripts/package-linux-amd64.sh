@@ -22,6 +22,10 @@ cp -a "$ROOT/tools/winpeas" "$BUNDLE/tools/winpeas"
 cp "$ROOT/docs/TRANSFER.md" "$BUNDLE/README-TRANSFER.md"
 cp "$ROOT/docs/KNOWN_TEST_FAILURES.md" "$BUNDLE/KNOWN_TEST_FAILURES.md"
 cp "$ROOT/docs/ENGINE_POLICY_AUDIT.md" "$BUNDLE/ENGINE_POLICY_AUDIT.md"
+cp "$ROOT/docs/SUPPORTED.md" "$BUNDLE/SUPPORTED.md"
+# The report is built by this exact engine against the bundled library, offline.
+XDG_CONFIG_HOME="$STAGE/config" WSCAN_LIBRARY_DIR="$BUNDLE/library" \
+  "$BUNDLE/wscan" audit-library "$BUNDLE/support-report"
 cat > "$BUNDLE/start.sh" <<'EOF'
 #!/bin/sh
 set -eu

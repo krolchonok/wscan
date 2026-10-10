@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ type execContext struct {
 	collab        *oast.Collaborator
 	allowCodeExec bool
 	allowExploit  bool
+	cookieJar     http.CookieJar
 }
 
 // execTemplate runs one template's requests (HTTP, TCP/network, DNS, SSL) against
@@ -43,6 +45,8 @@ func (e *Engine) execTemplate(ctx context.Context, t domain.Template, target str
 	if t.IsExploit && !ec.allowExploit {
 		return nil, []error{fmt.Errorf("%s: exploit: check is disabled for this project — enable it in settings (and acknowledge the warning) to run exploit checks", t.ID)}
 	}
+	// Session state belongs to this template and target, never another scan.
+	ec.cookieJar, _ = cookiejar.New(nil)
 	vars := evalVariables(t.Variables)
 	tvars := targetVars(target)
 	if t.Flow != "" {
@@ -93,6 +97,16 @@ func (e *Engine) execTemplate(ctx context.Context, t domain.Template, target str
 // last, when non-nil, receives a snapshot of the final response (for flow
 // scripts that read http(N).body / http_last_response).
 func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef domain.HTTPRequest, target string, vars map[string]any, tvars map[string]string, ec execContext) (findings []domain.Finding, errs []error, last *httpRespSnap) {
+	if ec.cookieJar == nil {
+		ec.cookieJar, _ = cookiejar.New(nil)
+	}
+	resolutionTarget := target
+	if reqDef.DisablePathAutomerge {
+		if origin, err := url.Parse(normalizeTarget(target)); err == nil {
+			origin.Path, origin.RawPath, origin.RawQuery, origin.Fragment = "", "", "", ""
+			resolutionTarget = origin.String()
+		}
+	}
 	preps, prepErrs := prepareRequests(reqDef, vars, tvars, e.config.LibraryDir, t.Source)
 	for _, pe := range prepErrs {
 		errs = append(errs, pe)
@@ -114,7 +128,7 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 				}
 			}
 		}
-		u, err := resolveURL(target, reqPath)
+		u, err := resolveURL(resolutionTarget, reqPath)
 		if err != nil {
 			errs = append(errs, templateErr(t.ID, err))
 			continue
@@ -139,11 +153,11 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 			}
 			u = overridden
 		}
-		client := ec.client
+		client := requestHTTPClient(ec.client, reqDef, target, ec.cookieJar)
 		reqTimeout := time.Duration(ec.timeout) * time.Second
 		if pr.timeout > 0 {
 			reqTimeout = pr.timeout
-			c := *ec.client
+			c := *client
 			c.Timeout = reqTimeout + time.Second
 			client = &c
 		}
@@ -158,6 +172,7 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 		}
 		var resp *http.Response
 		var elapsed time.Duration
+		var responseCancel context.CancelFunc
 		for attempt := 0; attempt <= ec.retries; attempt++ {
 			if ec.rateTick != nil {
 				select {
@@ -176,7 +191,7 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 				}
 			}
 			reqCtx, cancel := context.WithTimeout(ctx, reqTimeout)
-			req, requestErr := buildHTTPRequest(reqCtx, pr.method, target, u, reqBody)
+			req, requestErr := buildHTTPRequest(reqCtx, pr.method, resolutionTarget, u, reqBody)
 			if requestErr != nil {
 				cancel()
 				err = requestErr
@@ -191,10 +206,11 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 			started := time.Now()
 			resp, err = client.Do(req)
 			elapsed = time.Since(started)
-			cancel()
 			if err == nil {
+				responseCancel = cancel
 				break
 			}
+			cancel()
 			if !isOverloadErr(err) && attempt == ec.retries {
 				break
 			}
@@ -203,8 +219,17 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 			errs = append(errs, templateErr(t.ID+" "+target, err))
 			continue
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		limit := int64(1 << 20)
+		if reqDef.MaxSize > 0 {
+			limit = reqDef.MaxSize
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, limit))
 		_ = resp.Body.Close()
+		responseCancel()
+		if readErr != nil {
+			errs = append(errs, templateErr(t.ID+" "+target, fmt.Errorf("read HTTP response: %w", readErr)))
+			continue
+		}
 		header := resp.Header.Clone()
 		env := buildEnv(resp.StatusCode, header, body)
 		env["duration"] = elapsed.Seconds()
@@ -243,12 +268,18 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 		// Nuclei internal matchers gate later steps / feed extractors; they
 		// must not emit findings on their own (same rule as tcp:/code:).
 		if matchersOnlyInternal(reqDef.Matchers) {
+			if reqDef.StopAtFirstMatch {
+				return findings, errs, last
+			}
 			continue
 		}
 		findings = append(findings, domain.Finding{
 			TemplateID: t.ID, Name: t.Info.Name, Severity: t.Info.Severity,
 			Target: target, MatchedAt: u, Evidence: evidence, Risk: t.Risk, Time: time.Now().UTC(),
 		})
+		if reqDef.StopAtFirstMatch {
+			return findings, errs, last
+		}
 	}
 	return findings, errs, last
 }
@@ -366,3 +397,32 @@ type wrappedErr struct {
 
 func (w *wrappedErr) Error() string { return w.id + ": " + w.err.Error() }
 func (w *wrappedErr) Unwrap() error { return w.err }
+
+// requestHTTPClient applies template options without changing the shared client.
+// Redirects stay on the selected host and port even when redirects:true is set.
+func requestHTTPClient(base *http.Client, request domain.HTTPRequest, target string, jar http.CookieJar) *http.Client {
+	client := *base
+	client.Jar = nil
+	if request.CookieReuse && !request.DisableCookie {
+		client.Jar = jar
+	}
+	maximum := request.MaxRedirects
+	if maximum == 0 {
+		maximum = 5
+	}
+	selected, _ := url.Parse(normalizeTarget(target))
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if !request.Redirects && !request.HostRedirects {
+			return http.ErrUseLastResponse
+		}
+		// len(via)==1 is the first redirect, so max-redirects:1 permits one hop.
+		if len(via) > maximum {
+			return http.ErrUseLastResponse
+		}
+		if selected == nil || !strings.EqualFold(next.URL.Hostname(), selected.Hostname()) || effectiveHTTPPort(next.URL) != effectiveHTTPPort(selected) {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	return &client
+}

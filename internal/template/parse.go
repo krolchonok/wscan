@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"wscan/internal/domain"
+	"wscan/internal/jsapi"
 )
 
 var expressionRE = regexp.MustCompile(`\{\{([^}]+)\}\}`)
@@ -36,6 +37,11 @@ func Parse(data []byte, source string) (domain.Template, error) {
 		if strings.TrimSpace(req.Code) == "" && strings.TrimSpace(req.PreCondition) == "" {
 			t.Unsupported = append(t.Unsupported, fmt.Sprintf("javascript[%d] has no code", i))
 		}
+		for _, source := range []string{req.Init, req.PreCondition, req.Code} {
+			for _, reason := range jsapi.CheckSource(source) {
+				t.Unsupported = append(t.Unsupported, fmt.Sprintf("javascript[%d]: %s", i, reason))
+			}
+		}
 		checkMatchers(req.Matchers, &t.Unsupported)
 	}
 	var root map[string]any
@@ -56,9 +62,18 @@ func Parse(data []byte, source string) (domain.Template, error) {
 				if !ok {
 					continue
 				}
-				// Behavioral request fields (redirect handling, early-exit hints,
-				// cookie reuse, declared request counts) do not change which
-				// request we send or how we match, so we accept and ignore them.
+				// Behavior-changing fields must be implemented or rejected explicitly.
+				for _, key := range []string{"pre-condition", "global-matchers", "digest-username", "digest-password", "read-all", "req-condition", "iterate-all"} {
+					if value, exists := request[key]; exists && meaningfulValue(value) {
+						t.Unsupported = append(t.Unsupported, fmt.Sprintf("http[%d]: %s is not implemented by the native engine", i, key))
+					}
+				}
+				if value, ok := request["max-size"].(int); ok && value < 0 {
+					t.Unsupported = append(t.Unsupported, fmt.Sprintf("http[%d]: max-size must not be negative", i))
+				}
+				if value, ok := request["max-redirects"].(int); ok && value < 0 {
+					t.Unsupported = append(t.Unsupported, fmt.Sprintf("http[%d]: max-redirects must not be negative", i))
+				}
 				unknownKeys(request, fmt.Sprintf("http[%d]", i), []string{
 					"method", "path", "raw", "headers", "body", "matchers", "matchers-condition", "extractors",
 					"payloads", "attack", "threads",
@@ -265,4 +280,23 @@ func Validate(t domain.Template) error {
 		return fmt.Errorf("unsupported template features: %s", strings.Join(t.Unsupported, "; "))
 	}
 	return nil
+}
+
+func meaningfulValue(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case string:
+		return v != ""
+	case int:
+		return v != 0
+	case []any:
+		return len(v) > 0
+	case map[string]any:
+		return len(v) > 0
+	default:
+		return true
+	}
 }

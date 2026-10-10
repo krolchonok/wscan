@@ -21,9 +21,10 @@ jobs:
           gh release download v0.1.0 --dir dist/baseline --pattern wscan-v0.1.0-linux-amd64.tar.gz --pattern wscan-v0.1.0-linux-amd64.tar.gz.sha256
           (cd dist/baseline && sha256sum -c wscan-v0.1.0-linux-amd64.tar.gz.sha256)
           tar -xzf dist/baseline/wscan-v0.1.0-linux-amd64.tar.gz -C library --strip-components=2 wscan-linux-amd64/library
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
       - name: Test
         id: tests
-        continue-on-error: true
         run: CGO_ENABLED=0 go test ./...
       - name: Package
         run: ./scripts/package-linux-amd64.sh "$GITHUB_REF_NAME"

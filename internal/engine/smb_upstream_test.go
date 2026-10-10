@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -114,7 +115,7 @@ func TestUpstreamSMBVersionDetectUsesNewConstructor(t *testing.T) {
 	resp := fakeSMB2NegotiateResponsePacket(0x01, 0x0311, 0, unixToFiletimeForTest(1700000000), 0)
 	port := fakeSMB2ServerForUpstreamTest(t, resp)
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{withJSPort(tmpl, port)})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{withJSPort(tmpl, port)})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestUpstreamSMBV1SupportedUsesToJSON(t *testing.T) {
 	copy(resp[4:8], []byte{0xff, 'S', 'M', 'B'})
 	port := fakeSMB2ServerForUpstreamTest(t, resp)
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{withJSPort(tmpl, port)})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{withJSPort(tmpl, port)})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -161,7 +162,7 @@ func TestUpstreamSMB2ServerTimeReadsNegotiationLog(t *testing.T) {
 		unixToFiletimeForTest(1700000000), unixToFiletimeForTest(1699000000))
 	port := fakeSMB2ServerForUpstreamTest(t, resp)
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{withJSPort(tmpl, port)})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{withJSPort(tmpl, port)})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestUpstreamSMBConnectInfoTemplatesDontCrash(t *testing.T) {
 				unixToFiletimeForTest(1700000000), unixToFiletimeForTest(1699000000))
 			port := fakeSMB2ServerForUpstreamTest(t, resp)
 			e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-			res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{withJSPort(tmpl, port)})
+			res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{withJSPort(tmpl, port)})
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -223,7 +224,7 @@ func TestUpstreamSMBSigningReadsSecurityMode(t *testing.T) {
 	resp := fakeSMB2NegotiateResponsePacket(0x01, 0x0311, 0, 0, 0)
 	port := fakeSMB2ServerForUpstreamTest(t, resp)
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{withJSPort(tmpl, port)})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{withJSPort(tmpl, port)})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

@@ -10,11 +10,9 @@ import (
 	"wscan/internal/domain"
 )
 
-// withJSPort overrides the Port arg of every javascript: request in tmpl, the
-// same role withListenerPort plays for tcp:/network: requests — the
-// generated msf-scanner javascript: templates bake a literal default RPORT
-// into args.Port (it wins over the target's own port, see execJavaScript),
-// so a fake-listener test must rewrite it to reach the ephemeral test port.
+// withJSPort records the fake listener port for runMSF and direct tests.
+// Tests must also put that port in the selected scan target: the engine
+// intentionally ignores template Port when it binds to a selected service.
 func withJSPort(tmpl domain.Template, port int) domain.Template {
 	out := tmpl
 	out.JavaScript = append([]domain.JavaScriptRequest(nil), tmpl.JavaScript...)

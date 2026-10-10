@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,7 +27,14 @@ import (
 
 var version = "dev"
 
+//go:embed docs/SUPPORTED.md
+var supportedFeatures string
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "capabilities" {
+		fmt.Print(supportedFeatures)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "audit-library" {
 		output := "reports/library-audit"
 		if len(os.Args) > 2 {

@@ -230,17 +230,25 @@ type Extractor struct {
 }
 
 type HTTPRequest struct {
-	ID                string            `yaml:"id"` // optional; used by flow: http("name")
-	Method            string            `yaml:"method"`
-	Path              StringList        `yaml:"path"`
-	Raw               StringList        `yaml:"raw"`
-	Headers           map[string]string `yaml:"headers"`
-	Body              string            `yaml:"body"`
-	Matchers          []Matcher         `yaml:"matchers"`
-	MatchersCondition string            `yaml:"matchers-condition"`
-	Extractors        []Extractor       `yaml:"extractors"`
-	Payloads          PayloadSet        `yaml:"payloads"`
-	Attack            string            `yaml:"attack"`
+	DisablePathAutomerge bool              `yaml:"disable-path-automerge"`
+	Redirects            bool              `yaml:"redirects"`
+	HostRedirects        bool              `yaml:"host-redirects"`
+	MaxRedirects         int               `yaml:"max-redirects"`
+	CookieReuse          bool              `yaml:"cookie-reuse"`
+	DisableCookie        bool              `yaml:"disable-cookie"`
+	StopAtFirstMatch     bool              `yaml:"stop-at-first-match"`
+	MaxSize              int64             `yaml:"max-size"`
+	ID                   string            `yaml:"id"` // optional; used by flow: http("name")
+	Method               string            `yaml:"method"`
+	Path                 StringList        `yaml:"path"`
+	Raw                  StringList        `yaml:"raw"`
+	Headers              map[string]string `yaml:"headers"`
+	Body                 string            `yaml:"body"`
+	Matchers             []Matcher         `yaml:"matchers"`
+	MatchersCondition    string            `yaml:"matchers-condition"`
+	Extractors           []Extractor       `yaml:"extractors"`
+	Payloads             PayloadSet        `yaml:"payloads"`
+	Attack               string            `yaml:"attack"`
 }
 
 // Payload is one named payload source: an inline list of values, or a file path

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 
@@ -83,7 +84,7 @@ func TestSSHDefaultLoginsWrongPasswordIsQuietNotAnError(t *testing.T) {
 	}
 
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 10})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{tmpl})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{tmpl})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestSSHDefaultLoginsConnectionRefusedStillErrors(t *testing.T) {
 	}
 
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{tmpl})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{fmt.Sprintf("http://127.0.0.1:%d", port)}}, []domain.Template{tmpl})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
