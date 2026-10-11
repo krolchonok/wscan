@@ -1,6 +1,6 @@
 # Исходники и релизы
 
-Приватный репозиторий приложения: https://github.com/krolchonok/wscan.
+Публичный репозиторий приложения: https://github.com/krolchonok/wscan.
 Готовые сборки доступны в Releases. [Перенос и сборка](docs/TRANSFER.md).
 [Что поддерживается и что нет](docs/SUPPORTED.md): команда `wscan capabilities`.
 [Свежая совместимость каталога](docs/CATALOG_COVERAGE.md).
@@ -9,12 +9,10 @@
 
 ## Сборка из исходников — Linux x86-64
 
-Нужны Go 1.26 или новее и Git. Команды доступа к приватному репозиторию
-используют GitHub CLI (`gh`). Для упаковки нужны Python 3, `tar` и `sha256sum`.
+Нужны Go 1.26 или новее и Git. Для упаковки нужны Python 3, `tar` и `sha256sum`.
 
 ```sh
-gh auth login
-gh repo clone krolchonok/wscan
+git clone https://github.com/krolchonok/wscan.git
 cd wscan
 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o wscan .
 ./wscan version
