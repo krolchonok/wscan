@@ -621,7 +621,7 @@ func (m model) renderDetailsColumn(width, height int) string {
 			visible := max(1, height-lipgloss.Height(wrapPaneBody(body.String(), width))-2)
 			lo, hi := windowRange(m.findingIndex, len(findings), visible)
 			for i := lo; i < hi; i++ {
-				body.WriteString(renderListRow(resultLabel(findings[i]), i == m.findingIndex, width+4))
+				body.WriteString(renderFindingRow(findings[i], i == m.findingIndex, width+4))
 			}
 			body.WriteString(moreLine(len(findings)-hi, false))
 		}
@@ -672,7 +672,7 @@ func (m model) renderDetailsColumn(width, height int) string {
 		lo, hi := windowRange(m.findingIndex, len(findings), visible)
 		body.WriteString(moreLine(lo, true))
 		for i := lo; i < hi; i++ {
-			body.WriteString(renderListRow(resultLabel(findings[i]), i == m.findingIndex, width+4))
+			body.WriteString(renderFindingRow(findings[i], i == m.findingIndex, width+4))
 		}
 		body.WriteString(moreLine(len(findings)-hi, false))
 	}

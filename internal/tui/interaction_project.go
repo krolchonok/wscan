@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-const interactionMenuCount = 12
+const interactionMenuCount = 14
 
 func (m *model) openProjectInteractions() {
 	previous := m.screen

@@ -12,6 +12,7 @@ import (
 )
 
 func resultClass(f domain.Finding) string {
+	f.Severity = domain.EffectiveSeverity(f)
 	if f.Severity == "error" || strings.HasPrefix(f.TemplateID, "nmap/") && nse.OutputIsError(f.Evidence) {
 		return "Ошибка"
 	}
@@ -68,7 +69,7 @@ func resultRank(f domain.Finding) int {
 	case "Сведения":
 		return 6
 	}
-	switch f.Severity {
+	switch domain.EffectiveSeverity(f) {
 	case "critical":
 		return 0
 	case "high":
@@ -100,6 +101,9 @@ func orderedResults(fs []domain.Finding) []domain.Finding {
 }
 
 func resultTitle(f domain.Finding) string {
+	if f.TemplateID == "nmap/vnc-info" && domain.EffectiveSeverity(f) == "critical" {
+		return "VNC: сервер предлагает доступ без авторизации"
+	}
 	id := strings.TrimPrefix(f.TemplateID, "nmap/")
 	names := map[string]string{
 		"smb-version-detect":   "SMB: согласованная версия соединения",
@@ -131,7 +135,7 @@ func resultLabel(f domain.Finding) string {
 		return resultTitle(f)
 	}
 	if class == "Риск" {
-		class = map[string]string{"critical": "КРИТИЧЕСКИЙ", "high": "ВЫСОКИЙ", "medium": "СРЕДНИЙ", "low": "НИЗКИЙ"}[f.Severity]
+		class = map[string]string{"critical": "КРИТИЧЕСКИЙ", "high": "ВЫСОКИЙ", "medium": "СРЕДНИЙ", "low": "НИЗКИЙ"}[domain.EffectiveSeverity(f)]
 		if class == "" {
 			class = "РИСК"
 		}
@@ -212,10 +216,18 @@ func smbSummary(fs []domain.Finding) []string {
 }
 
 func resultExplanation(f domain.Finding) string {
+	if f.Protocol == "offline" && strings.HasPrefix(f.TemplateID, "offline/cve/") {
+		return f.Description
+	}
 	if resultClass(f) == "Ошибка" {
 		return "Проверка не завершилась успешно. Её вывод не подтверждает наличие уязвимости."
 	}
 	switch strings.TrimPrefix(f.TemplateID, "nmap/") {
+	case "vnc-info":
+		if domain.EffectiveSeverity(f) == "critical" {
+			return "Сервер предлагает способ доступа VNC без авторизации. Это критический риск; скрипт проверяет согласование способов защиты, но не подтверждает получение рабочего стола или возможность управления. Ограничьте сетевой доступ и включите авторизацию VNC."
+		}
+		return "Определены версия VNC и способы защиты. Этот результат сам по себе не подтверждает доступ без авторизации."
 	case "smb-version-detect":
 		return "Это версия, согласованная данной проверкой. Полный список поддерживаемых версий смотрите в «SMB: поддерживаемые версии»."
 	case "smb-enum", "ntlm-info", "smb-enum-domains", "smb-os-detect", "smb-os-discovery":

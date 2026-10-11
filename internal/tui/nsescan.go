@@ -70,7 +70,7 @@ func nseFinding(host string, r nse.ScriptResult) domain.Finding {
 	return domain.Finding{
 		TemplateID: "nmap/" + r.ScriptID,
 		Name:       r.ScriptID,
-		Severity:   nse.OutputSeverity(r.Output),
+		Severity:   nse.ScriptSeverity(r.ScriptID, r.Output),
 		Target:     target,
 		MatchedAt:  matched,
 		Evidence:   r.Output,

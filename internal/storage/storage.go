@@ -315,6 +315,7 @@ func (s *Store) Findings(ctx context.Context, runID int64) ([]domain.Finding, er
 		if err = json.Unmarshal([]byte(b), &f); err != nil {
 			return nil, err
 		}
+		f.Severity = domain.EffectiveSeverity(f)
 		out = append(out, f)
 	}
 	return out, rows.Err()

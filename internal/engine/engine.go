@@ -65,14 +65,15 @@ type Engine struct {
 	config Config
 }
 type Result struct {
-	HostNames      map[string][]string
-	RunID          int64
-	Findings       []domain.Finding
-	Errors         []string
-	Skipped        []string
-	Services       []domain.Service
-	LiveHosts      []string
-	TargetsScanned int
+	HostNames         map[string][]string
+	RunID             int64
+	Findings          []domain.Finding
+	Errors            []string
+	Skipped           []string
+	Services          []domain.Service
+	LiveHosts         []string
+	TargetsScanned    int
+	HTTPRequestsSaved int64
 }
 
 func New(s Saver, c Config) *Engine {
@@ -178,6 +179,8 @@ func (e *Engine) ScanProgress(ctx context.Context, p domain.Project, templates [
 		timeout = p.TimeoutSeconds
 	}
 	client := newScanHTTPClient(timeout, perHost)
+	defer client.CloseIdleConnections()
+	responseCache := newHTTPResponseCache()
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, service := range p.Services {
@@ -252,7 +255,7 @@ func (e *Engine) ScanProgress(ctx context.Context, p domain.Project, templates [
 					report()
 					continue
 				}
-				ec := execContext{client: client, rateTick: rateTick, retries: retries, timeout: timeout, collab: collab, allowCodeExec: p.AllowCodeExec, allowExploit: p.AllowExploit}
+				ec := execContext{responseCache: responseCache, client: client, rateTick: rateTick, retries: retries, timeout: timeout, collab: collab, allowCodeExec: p.AllowCodeExec, allowExploit: p.AllowExploit}
 				fs, es := e.execTemplate(ctx, job.tmpl, job.target, ec)
 				if len(job.tmpl.Workflows) > 0 {
 					wfs, wes := e.execWorkflow(ctx, job.tmpl.Workflows, job.target, ec, 0)
@@ -310,6 +313,7 @@ feed:
 	}
 	close(jobs)
 	wg.Wait()
+	result.HTTPRequestsSaved = responseCache.hits
 	if ctx.Err() != nil {
 		status = "cancelled"
 	}

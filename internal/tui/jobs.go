@@ -310,6 +310,9 @@ func (m *model) applyJobEvent(ev jobEvent) {
 		j.addLog(fmt.Sprintf("Завершено: запуск #%d, сервисов %d, результатов %d, ошибок проверок %d", j.runID, len(res.Services), j.findings, len(res.Errors)))
 	}
 	j.addLog(resultCounts(res.Findings, len(res.Errors)))
+	if res.HTTPRequestsSaved > 0 {
+		j.addLog(fmt.Sprintf("HTTP: сэкономлено повторных запросов — %d", res.HTTPRequestsSaved))
+	}
 	if j.projectID != 0 && j.projectID == m.current.ID {
 		selectedNetworks := map[string]bool{}
 		for _, target := range j.targets {

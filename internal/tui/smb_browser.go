@@ -144,6 +144,12 @@ func (m model) updateInteractionMenu(key string) (tea.Model, tea.Cmd) {
 	case "down", "j", "tab":
 		m.interactionIndex = (m.interactionIndex + 1) % interactionMenuCount
 	case "enter":
+		if m.interactionIndex == 13 {
+			return m.openNSEVuln()
+		}
+		if m.interactionIndex == 12 {
+			return m.openVersionCVE()
+		}
 		if m.interactionIndex == 7 {
 			return m.openWebDiscovery()
 		}
@@ -435,18 +441,26 @@ func exportSMBEntries(directory, host, share, remote string, entries []js.SMBEnt
 
 func (m model) viewInteractionMenu(w int) string {
 	body := headingStyle.Render("Взаимодействие проекта") + fmt.Sprintf("\n\nХост: %s · h выбрать хост\n↑/↓ инструмент · Enter открыть\n\n", smbDisplayName(m.smbBrowser.host))
-	body += renderListRow(fmt.Sprintf("SMB :%d — проводник шар (guest / без пароля)", m.smbBrowser.port), m.interactionIndex == 0, w)
-	body += renderListRow(fmt.Sprintf("WinRM :%d — вход с учёткой, права, файлы, команды", m.winrmBrowser.options.Port), m.interactionIndex == 1, w)
-	body += renderListRow("MSSQL — учётка, аудит и интерактивная SQL-консоль", m.interactionIndex == 2, w)
-	body += renderListRow("Web LFI — проверка URL и параметра", m.interactionIndex == 3, w)
-	body += renderListRow(fmt.Sprintf("FTP :%d — проводник (anonymous / учётка / FTPS)", m.ftpBrowser.options.Port), m.interactionIndex == 4, w)
-	body += renderListRow("PostgreSQL — учётка / без пароля, чтение таблиц и SQL", m.interactionIndex == 5, w)
-	body += renderListRow("MySQL / MariaDB — учётка / пустой пароль, чтение таблиц и SQL", m.interactionIndex == 6, w)
-	body += renderListRow("Web — поиск каталогов и файлов по словарю", m.interactionIndex == 7, w)
-	body += renderListRow("SSH — словарный перебор учёток", m.interactionIndex == 8, w)
-	body += renderListRow("Web SQLi — проверка форм на SQL-инъекции", m.interactionIndex == 9, w)
-	body += renderListRow("Web Upload — проверка загрузки PHP-файлов (RCE)", m.interactionIndex == 10, w)
-	body += renderListRow(fmt.Sprintf("Kyocera :%d — выгрузка адресной книги без аутентификации", m.kyoceraBook.target.Port), m.interactionIndex == 11, w)
+	rows := []string{
+		fmt.Sprintf("SMB :%d — проводник шар (guest / без пароля)", m.smbBrowser.port),
+		fmt.Sprintf("WinRM :%d — вход с учёткой, права, файлы, команды", m.winrmBrowser.options.Port),
+		"MSSQL — учётка, аудит и интерактивная SQL-консоль",
+		"Web LFI — проверка URL и параметра",
+		fmt.Sprintf("FTP :%d — проводник (anonymous / учётка / FTPS)", m.ftpBrowser.options.Port),
+		"PostgreSQL — учётка / без пароля, чтение таблиц и SQL",
+		"MySQL / MariaDB — учётка / пустой пароль, чтение таблиц и SQL",
+		"Web — поиск каталогов и файлов по словарю",
+		"SSH — словарный перебор учёток",
+		"Web SQLi — проверка форм на SQL-инъекции",
+		"Web Upload — проверка загрузки PHP-файлов (RCE)",
+		fmt.Sprintf("Kyocera :%d — выгрузка адресной книги без аутентификации", m.kyoceraBook.target.Port),
+		"CVE — офлайн: сверить сохранённые версии (весь проект)",
+		"NSE --script vuln — активные проверки (весь проект)",
+	}
+	lo, hi := windowRange(m.interactionIndex, len(rows), max(1, m.panelRows()-6))
+	for i := lo; i < hi; i++ {
+		body += renderListRow(rows[i], i == m.interactionIndex, w)
+	}
 	return m.renderPanel(w, body)
 }
 

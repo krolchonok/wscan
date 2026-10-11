@@ -235,7 +235,7 @@ func runScan(ctx context.Context, store *storage.Store, cat *catalog.Catalog, sc
 	if len(skipped) > 0 {
 		fmt.Fprintln(os.Stderr, "Skipped:", strings.Join(skipped, "; "))
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": result.RunID, "services": result.Services, "targets_scanned": result.TargetsScanned, "findings": result.Findings, "errors": result.Errors})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": result.RunID, "services": result.Services, "targets_scanned": result.TargetsScanned, "http_requests_saved": result.HTTPRequestsSaved, "findings": result.Findings, "errors": result.Errors})
 }
 
 // runNSEScripts runs the selected NSE scripts against discovered services with
@@ -300,7 +300,7 @@ func runNSEScripts(ctx context.Context, libraryDir string, p domain.Project, ser
 					target = fmt.Sprintf("%s:%d", host, r.Port)
 					matched = fmt.Sprintf("nse://%s:%d/%s", host, r.Port, r.ScriptID)
 				}
-				findings = append(findings, domain.Finding{TemplateID: "nmap/" + r.ScriptID, Name: r.ScriptID, Severity: nse.OutputSeverity(r.Output), Target: target, MatchedAt: matched, Evidence: r.Output, Risk: "active", Time: time.Now().UTC()})
+				findings = append(findings, domain.Finding{TemplateID: "nmap/" + r.ScriptID, Name: r.ScriptID, Severity: nse.ScriptSeverity(r.ScriptID, r.Output), Target: target, MatchedAt: matched, Evidence: r.Output, Risk: "active", Time: time.Now().UTC()})
 			}
 		}
 	}

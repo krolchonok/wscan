@@ -898,6 +898,17 @@ func (m model) groupValues(e catalog.Entry) []string {
 		}
 		return vals
 	}
+	// Reviewed Web groups are additional choices beside the original type.
+	// Preserve the existing combined category labels for other entries.
+	if e.Service == "Web" && strings.Contains(e.Type, "Web: ") {
+		var values []string
+		for _, value := range strings.Split(e.Type, ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				values = append(values, value)
+			}
+		}
+		return values
+	}
 	return []string{strings.TrimSpace(e.Type)}
 }
 
@@ -961,6 +972,9 @@ func (m model) groupTemplateIDs(name string, includeUnavailable ...bool) []strin
 }
 
 func entryHasType(entry catalog.Entry, category string) bool {
+	if strings.HasPrefix(category, "Web: ") && isBruteEntry(entry) {
+		return false
+	}
 	// The "type" axis in visibleCatalogGroups groups NSE scripts by their
 	// whole comma-joined category set as one label (e.g. "Fuzzing,
 	// Интенсивные проверки" for a script tagged both fuzzer and intrusive),
@@ -1231,16 +1245,20 @@ var rowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#D7E2E0"))
 var selectedRowStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#102A2A")).Background(lipgloss.Color("#5EEAD4"))
 
 func renderListRow(text string, selected bool, terminalWidth int) string {
+	return renderStyledListRow(text, selected, terminalWidth, rowStyle, selectedRowStyle)
+}
+
+func renderStyledListRow(text string, selected bool, terminalWidth int, normal, highlight lipgloss.Style) string {
 	if terminalWidth <= 0 {
 		terminalWidth = 80
 	}
 	rowWidth := max(1, terminalWidth-4)
 	contentWidth := max(0, rowWidth-2)
 	prefix := "  "
-	style := rowStyle
+	style := normal
 	if selected {
 		prefix = "▶ "
-		style = selectedRowStyle
+		style = highlight
 	}
 	content := ansi.Truncate(prefix+text, contentWidth, "…")
 	// Pad to the exact target width ourselves and skip Style.Width(): lipgloss's

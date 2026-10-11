@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -32,6 +31,7 @@ type execContext struct {
 	allowCodeExec bool
 	allowExploit  bool
 	cookieJar     http.CookieJar
+	responseCache *httpResponseCache
 }
 
 // execTemplate runs one template's requests (HTTP, TCP/network, DNS, SSL) against
@@ -44,6 +44,10 @@ func (e *Engine) execTemplate(ctx context.Context, t domain.Template, target str
 	// the target vulnerability instead of only detecting it.
 	if t.IsExploit && !ec.allowExploit {
 		return nil, []error{fmt.Errorf("%s: exploit: check is disabled for this project — enable it in settings (and acknowledge the warning) to run exploit checks", t.ID)}
+	}
+	if ec.responseCache != nil && !cacheableTemplate(t) {
+		end := ec.responseCache.beginChange(cacheHost(target))
+		defer end()
 	}
 	// Session state belongs to this template and target, never another scan.
 	ec.cookieJar, _ = cookiejar.New(nil)
@@ -170,68 +174,50 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 			}
 			client = clientWithSNI(client, sni, reqTimeout)
 		}
-		var resp *http.Response
-		var elapsed time.Duration
-		var responseCancel context.CancelFunc
-		for attempt := 0; attempt <= ec.retries; attempt++ {
-			if ec.rateTick != nil {
-				select {
-				case <-ctx.Done():
-					return findings, errs, last
-				case <-ec.rateTick:
-				}
-			}
-			if attempt > 0 {
-				// Brief pause before retrying a failed request — helps weak
-				// targets recover instead of immediately re-flooding them.
-				select {
-				case <-ctx.Done():
-					return findings, errs, last
-				case <-time.After(time.Duration(attempt) * 150 * time.Millisecond):
-				}
-			}
-			reqCtx, cancel := context.WithTimeout(ctx, reqTimeout)
-			req, requestErr := buildHTTPRequest(reqCtx, pr.method, resolutionTarget, u, reqBody)
-			if requestErr != nil {
-				cancel()
-				err = requestErr
-				break
+		limit := int64(1 << 20)
+		if reqDef.MaxSize > 0 {
+			limit = reqDef.MaxSize
+		}
+		build := func(requestCtx context.Context) (*http.Request, error) {
+			req, err := buildHTTPRequest(requestCtx, pr.method, resolutionTarget, u, reqBody)
+			if err != nil {
+				return nil, err
 			}
 			for k, v := range reqHeaders {
-				if !httpguts.ValidHeaderFieldName(k) || !httpguts.ValidHeaderFieldValue(v) {
-					continue
+				if httpguts.ValidHeaderFieldName(k) && httpguts.ValidHeaderFieldValue(v) {
+					req.Header.Set(k, v)
 				}
-				req.Header.Set(k, v)
 			}
-			started := time.Now()
-			resp, err = client.Do(req)
-			elapsed = time.Since(started)
-			if err == nil {
-				responseCancel = cancel
-				break
+			return req, nil
+		}
+		load := func() (httpResponseData, error) { return fetchHTTPResponse(ctx, client, ec, reqTimeout, limit, build) }
+		var data httpResponseData
+		request, buildErr := build(ctx)
+		if buildErr != nil {
+			errs = append(errs, templateErr(t.ID, buildErr))
+			continue
+		}
+		key, eligible := httpResponseCacheKey(request, reqDef, reqTimeout, limit)
+		if ec.responseCache != nil && cacheableTemplate(t) && eligible && pr.tlsSNI == "" && oastToken == "" {
+			data, err = ec.responseCache.get(ctx, cacheHost(u), key, t.ID, load)
+		} else {
+			if ec.responseCache != nil && cacheableTemplate(t) {
+				end := ec.responseCache.beginChange(cacheHost(u))
+				data, err = load()
+				end()
+			} else {
+				data, err = load()
 			}
-			cancel()
-			if !isOverloadErr(err) && attempt == ec.retries {
-				break
-			}
+		}
+		if ctx.Err() != nil {
+			return findings, errs, last
 		}
 		if err != nil {
 			errs = append(errs, templateErr(t.ID+" "+target, err))
 			continue
 		}
-		limit := int64(1 << 20)
-		if reqDef.MaxSize > 0 {
-			limit = reqDef.MaxSize
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, limit))
-		_ = resp.Body.Close()
-		responseCancel()
-		if readErr != nil {
-			errs = append(errs, templateErr(t.ID+" "+target, fmt.Errorf("read HTTP response: %w", readErr)))
-			continue
-		}
-		header := resp.Header.Clone()
-		env := buildEnv(resp.StatusCode, header, body)
+		body, header, elapsed := data.body, data.header, data.elapsed
+		env := buildEnv(data.status, header, body)
 		env["duration"] = elapsed.Seconds()
 		for k, v := range pr.payload {
 			if _, exists := env[k]; !exists {
@@ -251,13 +237,13 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 			}
 		}
 		extractEvidence := runExtractors(reqDef.Extractors, env, vars, header, body)
-		matched, evidence := matchOrExtract(reqDef.Matchers, reqDef.MatchersCondition, resp.StatusCode, header, body, env, extractEvidence)
+		matched, evidence := matchOrExtract(reqDef.Matchers, reqDef.MatchersCondition, data.status, header, body, env, extractEvidence)
 		last = &httpRespSnap{
 			// Matched = matchers passed (incl. internal-only gates). Flow uses
 			// this for && / if; findings are still suppressed for internal-only.
 			Matched:     matched,
 			Body:        string(body),
-			StatusCode:  resp.StatusCode,
+			StatusCode:  data.status,
 			Header:      env["header"].(string),
 			ContentType: headersGet(header, "Content-Type"),
 			URL:         u,
@@ -275,7 +261,7 @@ func (e *Engine) execHTTPRequest(ctx context.Context, t domain.Template, reqDef 
 		}
 		findings = append(findings, domain.Finding{
 			TemplateID: t.ID, Name: t.Info.Name, Severity: t.Info.Severity,
-			Target: target, MatchedAt: u, Evidence: evidence, Risk: t.Risk, Time: time.Now().UTC(),
+			Target: target, MatchedAt: u, Evidence: evidence, Risk: t.Risk, Time: data.observedAt,
 		})
 		if reqDef.StopAtFirstMatch {
 			return findings, errs, last
@@ -337,6 +323,10 @@ const maxWorkflowDepth = 6
 func (e *Engine) execWorkflow(ctx context.Context, entries []domain.WorkflowEntry, target string, ec execContext, depth int) ([]domain.Finding, []error) {
 	if depth >= maxWorkflowDepth {
 		return nil, nil
+	}
+	if ec.responseCache != nil {
+		end := ec.responseCache.beginChange(cacheHost(target))
+		defer end()
 	}
 	var findings []domain.Finding
 	var errs []error

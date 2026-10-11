@@ -3,6 +3,8 @@ package nse
 import (
 	"regexp"
 	"strings"
+
+	"wscan/internal/domain"
 )
 
 // vulnerableStateRE matches the "VULNERABLE" state line emitted by nmap's vuln
@@ -24,6 +26,14 @@ func OutputSeverity(output string) string {
 		return "unknown"
 	}
 	return "info"
+}
+
+// ScriptSeverity preserves informational discovery output while surfacing
+// script-specific security findings in both CLI and TUI scans.
+func ScriptSeverity(scriptID, output string) string {
+	return domain.EffectiveSeverity(domain.Finding{
+		TemplateID: "nmap/" + scriptID, Severity: OutputSeverity(output), Evidence: output,
+	})
 }
 
 // OutputIsError reports whether saved NSE output is an error message rather than

@@ -77,8 +77,8 @@ func (m model) findingLines(width int) []string {
 	}
 	body := fmt.Sprintf("%s\n\nТип: %s\nАдрес: %s\nВремя: %s\n\n%s\n", resultTitle(*f), resultClass(*f), f.MatchedAt, f.Time.Local().Format("02.01.2006 15:04:05"), resultExplanation(*f))
 	if resultClass(*f) == "Риск" {
-		severity := strings.ToUpper(f.Severity)
-		if f.Severity == "unknown" || f.Severity == "info" {
+		severity := strings.ToUpper(domain.EffectiveSeverity(*f))
+		if severity == "UNKNOWN" || severity == "INFO" {
 			severity = "не оценена"
 		}
 		body += "Критичность: " + severity + "\n"
@@ -157,7 +157,14 @@ func (m model) findingLines(width int) []string {
 		body += "\nr — раскрыть шаблон, описание, запрос и полный ответ.\n"
 	}
 	body = ansi.Strip(strings.ReplaceAll(body, "\r\n", "\n"))
-	return strings.Split(ansi.Wrap(body, max(1, width), ""), "\n")
+	lines := strings.Split(ansi.Wrap(body, max(1, width), ""), "\n")
+	// Add our own color after stripping control sequences from target output.
+	for i, line := range lines {
+		if strings.HasPrefix(line, "Критичность: ") {
+			lines[i] = rowStyle.Bold(true).Foreground(severityColor(domain.EffectiveSeverity(*f))).Render(line)
+		}
+	}
+	return lines
 }
 
 // findingEvidenceText keeps matcher implementation details out of the normal
@@ -277,7 +284,7 @@ func (m model) viewFindingDetails(w int) string {
 	list.WriteString(moreLine(lo, true))
 	for i := lo; i < hi; i++ {
 		f := findings[i]
-		list.WriteString(renderListRow(resultLabel(f), i == m.findingIndex, leftWidth))
+		list.WriteString(renderFindingRow(f, i == m.findingIndex, leftWidth))
 	}
 	list.WriteString(moreLine(len(findings)-hi, false))
 	lines := m.findingLines(rightWidth)
