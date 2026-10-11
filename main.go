@@ -61,7 +61,16 @@ func main() {
 	store, err := storage.Open(filepath.Join(appDir, "wscan.db"))
 	fatalIf(err)
 	defer store.Close()
-	cat := catalog.NewWithLibrary(filepath.Join(appDir, "templates"), findLibraryDir(appDir))
+	libraryDir := findLibraryDir(appDir)
+	if libraryDir == "" && (len(os.Args) == 1 || os.Args[1] == "scan") {
+		fmt.Fprintln(os.Stderr, "Скачивание библиотеки проверок из отдельного репозитория…")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		cfg, updateErr := libsync.UpdateContext(ctx, appDir, "", "")
+		cancel()
+		fatalIf(updateErr)
+		libraryDir = cfg.Path
+	}
+	cat := catalog.NewWithLibrary(filepath.Join(appDir, "templates"), libraryDir)
 	scan := engine.New(store, engine.Config{RPS: 5, Concurrency: 4, TimeoutSeconds: 10, Complete: false, OAST: true, LibraryDir: cat.LibraryDir()})
 	if len(os.Args) > 1 && os.Args[1] == "scan" {
 		fatalIf(runScan(context.Background(), store, cat, scan, os.Args[2:]))
