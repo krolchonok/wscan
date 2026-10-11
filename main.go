@@ -31,6 +31,15 @@ var version = "dev"
 var supportedFeatures string
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "signatures" {
+		root, err := os.UserConfigDir()
+		fatalIf(err)
+		report := discovery.ServiceProbeReport(findLibraryDir(filepath.Join(root, "wscan")))
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		fatalIf(encoder.Encode(report))
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "capabilities" {
 		fmt.Print(supportedFeatures)
 		return

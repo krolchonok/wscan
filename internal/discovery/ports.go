@@ -165,6 +165,10 @@ func (s Scanner) Scan(ctx context.Context, target string) ([]domain.Service, err
 				service := domain.Service{Host: p.ip.String(), Port: p.port, Protocol: "tcp", Name: name, PortService: database.names["tcp"][p.port], Tunnel: tunnel, State: "open"}
 				if !c.NoVersion {
 					service = identifyService(ctx, conn, service, c.Timeout)
+					_ = conn.Close()
+					if service.Product == "" || service.Version == "" {
+						service = identifyProbeService(ctx, service, c.LibraryDir, c.Timeout, rateTick)
+					}
 				}
 				_ = conn.Close()
 				if c.OnlyKnownServices && !knownService(service.Name) {
@@ -427,10 +431,14 @@ func (s Scanner) scanUDP(ctx context.Context, ips []net.IPAddr, c Config, comple
 							name = ""
 						}
 					}
-					if c.OnlyKnownServices && !knownService(name) {
+					service := domain.Service{Host: p.ip.String(), Port: p.port, Protocol: "udp", Name: name, PortService: database.names["udp"][p.port], State: "open"}
+					if !c.NoVersion {
+						service = identifyProbeService(ctx, service, c.LibraryDir, c.Timeout, rateTick)
+					}
+					if c.OnlyKnownServices && !knownService(service.Name) {
 						return
 					}
-					results <- domain.Service{Host: p.ip.String(), Port: p.port, Protocol: "udp", Name: name, PortService: database.names["udp"][p.port], State: "open"}
+					results <- service
 				}()
 			}
 		}()

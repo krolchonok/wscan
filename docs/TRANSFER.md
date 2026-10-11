@@ -1,13 +1,13 @@
 # Перенос wscan
 
-Релиз v0.1.3 рассчитан на Linux x86-64, собран без CGO. Go на новом ПК не нужен.
+Релиз v0.1.4 рассчитан на Linux x86-64, собран без CGO. Go на новом ПК не нужен.
 Архив содержит приложение, документацию и согласованный WinPEAS для ручного запуска.
 Библиотека проверок скачивается отдельно из https://github.com/krolchonok/wscan-templates.
 Внешние Nuclei/Nmap/Metasploit не нужны.
 
 ```sh
-sha256sum -c wscan-v0.1.3-linux-amd64.tar.gz.sha256
-tar -xzf wscan-v0.1.3-linux-amd64.tar.gz
+sha256sum -c wscan-v0.1.4-linux-amd64.tar.gz.sha256
+tar -xzf wscan-v0.1.4-linux-amd64.tar.gz
 cd wscan-linux-amd64
 ./start.sh library update
 ./start.sh
@@ -36,7 +36,7 @@ Windows/macOS этим архивом не поддерживаются.
 Нужен Go версии из go.mod; упаковка использует Python 3 и tar.
 
 ```sh
-./scripts/package-linux-amd64.sh v0.1.3
+./scripts/package-linux-amd64.sh v0.1.4
 ```
 
 Библиотека для упаковки не требуется. CI скачивает её из отдельного репозитория
@@ -44,5 +44,7 @@ Windows/macOS этим архивом не поддерживаются.
 Исторические релизы v0.1.0–v0.1.2 остаются архивами со старой схемой комплектации.
 
 Возможности: `./start.sh capabilities` или SUPPORTED.md.
+Загрузка сигнатур сервисов: `./start.sh signatures` (офлайн).
+После обновления приложения выполните `./start.sh library update`.
 После скачивания библиотеки получите офлайн-отчёт без сканирования целей:
 `./start.sh audit-library reports/library-audit`.

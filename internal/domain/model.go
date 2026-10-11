@@ -167,10 +167,16 @@ type Service struct {
 	Protocol string `json:"protocol"`
 	Name     string `json:"name"`
 	// PortService is a registry hint; Name is used for protocol routing.
-	PortService string `json:"port_service,omitempty"`
-	Product     string `json:"product,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Tunnel      string `json:"tunnel,omitempty"`
+	PortService      string   `json:"port_service,omitempty"`
+	Product          string   `json:"product,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	Tunnel           string   `json:"tunnel,omitempty"`
+	Info             string   `json:"info,omitempty"`
+	DetectedHostname string   `json:"detected_hostname,omitempty"`
+	OS               string   `json:"os,omitempty"`
+	DeviceType       string   `json:"device_type,omitempty"`
+	CPE              []string `json:"cpe,omitempty"`
+	FingerprintProbe string   `json:"fingerprint_probe,omitempty"`
 	// Target is the scope entry (domain, IP or URL) this service was found for.
 	// Host holds the resolved address, so a domain target maps to its IPs.
 	Target string `json:"target,omitempty"`
