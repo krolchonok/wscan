@@ -4,6 +4,8 @@
 Готовые сборки доступны в Releases. [Перенос и сборка](docs/TRANSFER.md).
 [Что поддерживается и что нет](docs/SUPPORTED.md): команда `wscan capabilities`.
 [Свежая совместимость каталога](docs/CATALOG_COVERAGE.md).
+[Первичная AD-разведка](docs/AD_RECON.md).
+[План автоматизации, TUI и Web](docs/AUTOMATION_UI_WEB_PLAN.md) · [макет интерфейса](docs/automation-ui-preview.html).
 Библиотека проверок хранится отдельно: https://github.com/krolchonok/wscan-templates.
 Полная база сигнатур сервисов подключена к нашему движку: `wscan signatures`.
 После обновления приложения обновите библиотеку: `wscan library update`.
@@ -355,3 +357,10 @@ Esc отменяет операцию, незавершённый локальн
 Удалённый доменный сбор **BloodHound CE** доступен в AD-взаимодействиях:
 LDAP/LDAPS с машины wscan, без запуска коллектора на Windows-целях.
 Профиль, ограничения и импорт ZIP: [BLOODHOUND.md](docs/BLOODHOUND.md).
+
+## Совместный TUI и Web
+
+`wscan --web` запускает локальный сервер рядом с TUI; `wscan serve` — только
+сервер. Откройте ссылку `Web:` из терминала. Основные сценарии доступны через
+веб-формы, расширенные проводники и консоли — через встроенный TUI в браузере.
+[Запуск, навигация и ограничения](docs/WEB.md).
