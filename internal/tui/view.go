@@ -353,6 +353,9 @@ func (m model) footer() string {
 		return "↑/↓ задача   Enter подробности и лог   x отменить   c очистить   e экспорт   Esc назад"
 	case "job-details":
 		if !m.jobDetailRaw {
+			if m.jobIndex >= 0 && m.jobIndex < len(m.jobs) && m.jobs[m.jobIndex].opensHostResults() {
+				return "Enter хосты и порты · r журнал · x отменить · e экспорт · Esc задачи"
+			}
 			return "Enter результаты · r журнал · x отменить · e экспорт · Esc задачи"
 		}
 		return "↑/↓ журнал   Enter результаты   r журнал/итог   x отменить   e экспорт   Esc задачи"
@@ -589,13 +592,16 @@ func (m model) renderServicesColumn(width, height int) string {
 		return renderColumn(body.String(), width, height, m.focusCol == 1)
 	}
 	services := m.servicesFor(host)
+	if m.selectedPortMissing() {
+		body.WriteString(renderListRow(fmt.Sprintf("%d/%s — не найден", m.preferredPort, m.preferredProtocol), true, width+4))
+	}
 	if len(services) == 0 {
 		body.WriteString(mutedStyle.Render("Портов пока нет.\nНажми Enter → найти порты.") + "\n")
 		return renderColumn(body.String(), width, height, m.focusCol == 1)
 	}
 	_, allFindings := m.hostSummary(host)
 	allPortsLine := fmt.Sprintf("%-*s %2dП %2dН", max(8, width-14), "Все порты", len(services), allFindings)
-	body.WriteString(renderListRow(allPortsLine, m.serviceIndex < 0, width+4))
+	body.WriteString(renderListRow(allPortsLine, m.serviceIndex < 0 && !m.selectedPortMissing(), width+4))
 	// When the host row is a domain that resolved to several IPs, discovery
 	// scanned each one, so the same port appears once per address. Show the IP
 	// so those rows read as distinct endpoints instead of duplicates.
@@ -616,6 +622,9 @@ func (m model) renderServicesColumn(width, height int) string {
 		multiIP = multiIP && host != firstIP
 	}
 	visible := max(1, height-4)
+	if m.selectedPortMissing() {
+		visible = max(1, visible-1)
+	}
 	lo, hi := windowRange(m.serviceIndex, len(services), visible)
 	body.WriteString(moreLine(lo, true))
 	for i := lo; i < hi; i++ {
@@ -655,6 +664,10 @@ func (m model) renderDetailsColumn(width, height int) string {
 		fmt.Fprintf(&body, "DNS: %s\n", strings.Join(names, ", "))
 	}
 	services := m.servicesFor(host)
+	if m.selectedPortMissing() {
+		fmt.Fprintf(&body, "%d/%s не найден у %s.\nВыбор порта сохранён для следующего хоста.", m.preferredPort, m.preferredProtocol, host)
+		return renderColumn(body.String(), width, height, m.focusCol == 2)
+	}
 	if m.serviceIndex < 0 || m.serviceIndex >= len(services) || len(services) == 0 {
 		findings := m.findingsFor(host)
 		if m.serviceIndex < 0 && len(services) > 0 {
@@ -822,7 +835,9 @@ func (m model) viewJobs(w int) string {
 		}
 		line := fmt.Sprintf("%s #%d %s · %s / %s · %s", statusIcon(j.status), j.id, scope, m.findProject(j.projectID).Name, j.label, dur)
 		if j.status == statusDone {
-			line += fmt.Sprintf("  результатов: %d", j.findings)
+			if !j.opensHostResults() || j.findings > 0 {
+				line += fmt.Sprintf("  результатов: %d", j.findings)
+			}
 			if !j.seen {
 				line += "  •новое"
 			}
@@ -831,7 +846,13 @@ func (m model) viewJobs(w int) string {
 			line += "  " + j.errText
 		}
 		body.WriteString(renderListRow(line, i == m.jobIndex, w))
-		body.WriteString(renderListRow("  "+j.progressText(min(20, max(3, w/6)))+"  "+j.stage, false, w))
+		summary := j.progressText(min(20, max(3, w/6))) + "  " + j.stage
+		if j.result != nil {
+			if discovered := j.discoverySummary(); discovered != "" {
+				summary = discovered + " · " + j.stage
+			}
+		}
+		body.WriteString(renderListRow("  "+summary, false, w))
 	}
 	body.WriteString(moreLine(len(rows)-hi, false))
 	return m.renderPanel(w, body.String())
@@ -1044,7 +1065,7 @@ func (m model) viewRepair(w int) string {
 func (m model) viewInput(w int) string {
 	label := map[string]string{"select-host-port": "Открытый порт: 445, 443/tcp или 53/udp", "ad-cidr": "Частная IPv4-подсеть CIDR (например 192.168.1.0/24)", "ptr-server": "IP DNS-сервера (например 10.0.0.10 или 10.0.0.10:53)", "mysql-port": "TCP-порт MySQL", "mysql-user": "Пользователь MySQL (Enter — пустое имя)", "mysql-database": "База MySQL (Enter — без выбранной базы)", "mysql-query": "SQL чтение или :rows users 100", "ssh-dict-user": "SSH-пользователь", "ssh-dict-users": "Файл пользователей (Enter — один пользователь)", "ssh-dict-passwords": "Файл словаря паролей", "ssh-dict-port": "TCP-порт SSH", "ssh-dict-rps": "SSH: попыток в секунду (0 — без ограничения скорости)", "ssh-dict-workers": "SSH: потоки 1–64", "ssh-dict-delay": "Пауза между попытками, мс: 0–60000", "web-wordlist-filter": "Поиск словаря по имени (Enter — все)", "web-discovery-url": "HTTP/HTTPS URL", "web-discovery-wordlist": "Путь к словарю (Enter — встроенный)", "web-discovery-extensions": "Расширения через запятую: php,html,txt", "web-discovery-vhost": "Virtual host (Enter — очистить)", "web-discovery-statuses": "HTTP-статусы через запятую (Enter — стандартные)", "web-discovery-sizes": "Исключить размеры ответов, байт, через запятую", "web-discovery-rps": "Запросов в секунду (0 — до 100)", "web-discovery-workers": "Параллельность: 1–64", "pg-port": "TCP-порт PostgreSQL", "pg-user": "Имя роли PostgreSQL для входа без пароля", "pg-database": "База PostgreSQL", "pg-query": "SQL только чтение или :rows public.table 100", "cred-username": "Имя пользователя", "cred-domain": "Домен (Enter — пропустить)", "cred-secret": "Пароль", "cred-notes": "Заметка (Enter — пропустить)", "lfi-url": "URL выбранного сервиса", "lfi-parameter": "Query-параметр для проверки LFI", "lfi-vhost": "Virtual host (Enter — очистить)", "kyocera-port": "TCP-порт сервиса Kyocera (обычно 9091)", "kyocera-wait": "Пауза перед запросом книги, сек (0–60)", "ftp-port": "TCP-порт FTP-сервера", "ftp-path": "Путь FTP-каталога", "smb-port": "TCP-порт выбранного SMB-сервиса", "module-share": "Имя SMB-шары для поиска конфигураций", "mssql-nse": "NSE: ms-sql-info / ms-sql-hasdbaccess / ms-sql-tables", "mssql-port": "TCP-порт MSSQL", "mssql-columns": "Таблица (schema.table)", "mssql-rows": "Таблица и число строк (dbo.users 100; максимум 500)", "mssql-count": "Таблица (schema.table)", "mssql-transfer-local": "Локальный файл для передачи", "mssql-transfer-address": "Наш IP, доступный Windows (VPN/IP интерфейса)", "mssql-transfer-port": "Порт Python HTTP-сервера", "mssql-transfer-remote": "Путь назначения на Windows (%TEMP%\\winPEAS.exe)", "mssql-winpeas": "Путь WinPEAS.exe на Windows", "mssql-report": "Путь текстового отчёта на Windows", "mssql-command": "Команда ОС через xp_cmdshell", "mssql-query": "SQL-запрос (может менять данные и настройки)", "mssql-database": "Имя базы MSSQL", "winrm-port": "TCP-порт WinRM", "winrm-path": "Каталог Windows (например C:\\Users)", "winrm-shell-command": "Команда в PowerShell-сессии", "winrm-command": "Одна команда PowerShell", "bulk-port": "Один порт на выбранных хостах (445, 443/tcp, 53/udp)", "new-project": "Название проекта", "add-target": "IP, имя хоста или URL", "add-network": "Подсеть CIDR (например 10.0.0.0/24)", "project-results-search": "Поиск результатов: хост, порт, CVE, название или текст", "search": "Фильтр шаблонов", "disc-ports": "Порты (напр. 22,80,443,8000-8100)"}[m.inputAction]
 	if label == "" {
-		label = map[string]string{"ad-access-host": "Хост контроллера домена (IP/DNS)", "ad-access-domain": "DNS-имя домена", "ad-coerce-callback": "Локальный IPv4 приёмника, доступный машинам (например адрес VPN)"}[m.inputAction]
+		label = map[string]string{"ad-bloodhound-limit": "BloodHound: лимит объектов и членов одной группы (1–50000)", "ad-access-host": "Хост контроллера домена (IP/DNS)", "ad-access-domain": "DNS-имя домена", "ad-coerce-callback": "Локальный IPv4 приёмника, доступный машинам (например адрес VPN)"}[m.inputAction]
 	}
 	if m.inputAction == "setting-value" {
 		label = settingLabels[m.settingsIndex]

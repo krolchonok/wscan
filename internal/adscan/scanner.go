@@ -242,7 +242,7 @@ func Scan(ctx context.Context, cidr string, progress func(done, total int)) (Res
 		controllers[i] = Host{Address: address, Ports: byAddress[address]}
 		controllers[i].Roles = classifyRoles(controllers[i])
 		ports := controllers[i].Ports
-		needsLDAP := contains(ports, 389) || contains(ports, 3268)
+		needsLDAP := ldapPort(ports) != 0
 		needsADCS := contains(ports, 80) || contains(ports, 443)
 		if !needsLDAP && !needsADCS {
 			continue
@@ -256,11 +256,7 @@ func Scan(ctx context.Context, cidr string, progress func(done, total int)) (Res
 				return
 			}
 			defer func() { <-sem }()
-			if contains(ports, 389) || contains(ports, 3268) {
-				port := 389
-				if !contains(ports, port) {
-					port = 3268
-				}
+			if port := ldapPort(ports); port != 0 {
 				info := rootDSE(ctx, address, port)
 				controllers[index].HostName = info.HostName
 				controllers[index].Domain = info.Domain
@@ -532,14 +528,24 @@ type rootDSEInfo struct {
 const maxAnonymousUsers = 1000
 
 func rootDSE(ctx context.Context, address string, port int) rootDSEInfo {
+	return rootDSEAt(ctx, address, port, port == 636 || port == 3269)
+}
+
+func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootDSEInfo {
 	var info rootDSEInfo
 	queryCtx, cancel := context.WithTimeout(ctx, ldapQueryLimit)
 	defer cancel()
-	server := url.URL{Scheme: "ldap", Host: net.JoinHostPort(address, fmt.Sprint(port))}
-	dialer := &net.Dialer{Timeout: probeTimeout}
-	conn, err := ldap.DialURL(server.String(), ldap.DialWithDialer(dialer))
+	scheme := "ldap"
+	if secure {
+		scheme = "ldaps"
+	}
+	server := url.URL{Scheme: scheme, Host: net.JoinHostPort(address, fmt.Sprint(port))}
+	dialer := &net.Dialer{Timeout: ldapQueryLimit}
+	// Reconnaissance must work with private/self-signed directory certificates;
+	// this unauthenticated probe never sends user credentials.
+	conn, err := ldap.DialURL(server.String(), ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: true}))
 	if err != nil {
-		info.Message = "LDAP открыт; RootDSE недоступен"
+		info.Message = "RootDSE: соединение не установлено: " + err.Error()
 		return info
 	}
 	defer conn.Close()
@@ -552,8 +558,12 @@ func rootDSE(ctx context.Context, address string, port int) rootDSEInfo {
 	request := ldap.NewSearchRequest("", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, int(ldapQueryLimit.Seconds()), false,
 		"(objectClass=*)", []string{"defaultNamingContext", "rootDomainNamingContext", "dnsHostName"}, nil)
 	response, err := conn.Search(request)
-	if err != nil || len(response.Entries) == 0 {
-		info.Message = "LDAP открыт; анонимное чтение RootDSE закрыто"
+	if err != nil {
+		info.Message = "RootDSE: запрос завершился ошибкой: " + err.Error()
+		return info
+	}
+	if response == nil || len(response.Entries) == 0 {
+		info.Message = "RootDSE: сервер не вернул данных"
 		return info
 	}
 	entry := response.Entries[0]
@@ -570,19 +580,27 @@ func rootDSE(ctx context.Context, address string, port int) rootDSEInfo {
 		info.Users, info.ASREPUsers, info.SPNUsers,
 			info.PasswordNotRequiredUsers, info.PasswordNeverExpiresUsers,
 			info.DelegationUsers, info.ReversibleEncryptionUsers,
-			info.DESOnlyUsers, info.AdminCountUsers = anonymousLDAPUsers(conn, dn)
+			info.DESOnlyUsers, info.AdminCountUsers, info.Message = anonymousLDAPUsers(conn, dn)
+		info.Message = "RootDSE прочитан анонимно; " + info.Message
 	}
 	return info
 }
 
-func anonymousLDAPUsers(conn *ldap.Conn, baseDN string) (users, asrepUsers, spnUsers, passwordNotRequired, passwordNeverExpires, delegation, reversibleEncryption, desOnly, adminCount []string) {
+func anonymousLDAPUsers(conn *ldap.Conn, baseDN string) (users, asrepUsers, spnUsers, passwordNotRequired, passwordNeverExpires, delegation, reversibleEncryption, desOnly, adminCount []string, message string) {
 	request := ldap.NewSearchRequest(baseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxAnonymousUsers, int(ldapQueryLimit.Seconds()), false,
 		"(&(objectCategory=person)(objectClass=user)(sAMAccountName=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))",
 		[]string{"sAMAccountName", "userAccountControl", "servicePrincipalName", "adminCount"}, nil)
 	response, err := conn.Search(request)
+	message = "LDAP-пользователи: записей не получено"
+	if err != nil {
+		message = "LDAP-пользователи: " + err.Error()
+	}
 	if response == nil || len(response.Entries) == 0 {
-		_ = err
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, message
+	}
+	message = fmt.Sprintf("LDAP-пользователи: получено записей %d", len(response.Entries))
+	if err != nil {
+		message += "; результат неполный: " + err.Error()
 	}
 	for _, entry := range response.Entries {
 		name := entry.GetAttributeValue("sAMAccountName")
@@ -619,7 +637,7 @@ func anonymousLDAPUsers(conn *ldap.Conn, baseDN string) (users, asrepUsers, spnU
 	}
 	return uniqueSorted(users), uniqueSorted(asrepUsers), uniqueSorted(spnUsers),
 		uniqueSorted(passwordNotRequired), uniqueSorted(passwordNeverExpires), uniqueSorted(delegation),
-		uniqueSorted(reversibleEncryption), uniqueSorted(desOnly), uniqueSorted(adminCount)
+		uniqueSorted(reversibleEncryption), uniqueSorted(desOnly), uniqueSorted(adminCount), message
 }
 
 func uniqueSorted(values []string) []string {
@@ -669,4 +687,13 @@ func bytesCompare(a, b []byte) int {
 		}
 	}
 	return len(a) - len(b)
+}
+
+func ldapPort(ports []int) int {
+	for _, port := range []int{389, 3268, 636, 3269} {
+		if contains(ports, port) {
+			return port
+		}
+	}
+	return 0
 }

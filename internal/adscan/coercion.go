@@ -24,12 +24,13 @@ import (
 // CoercionOptions uses named-pipe RPC over TCP/445. Callback is a reachable IPv4
 // address assigned to this machine. The receiver never serves shares or relays.
 type CoercionOptions struct {
-	Targets      []string
-	Callback     string
-	Credential   AccessOptions
-	Methods      []string
-	Timeout      time.Duration
-	DiscoverOnly bool
+	Targets       []string
+	Callback      string
+	Credential    AccessOptions
+	Methods       []string
+	Timeout       time.Duration
+	DiscoverOnly  bool
+	ReceiverDebug bool
 }
 
 func RunCoercion(parent context.Context, o CoercionOptions, progress func(string)) ([]AccessReport, error) {
@@ -130,7 +131,11 @@ func RunCoercion(parent context.Context, o CoercionOptions, progress func(string
 	if !o.DiscoverOnly {
 		var err error
 		var owned bool
-		receiver, owned, err = receiverForCoercion(parent, ip.String(), seen)
+		receiver, owned, err = receiverForCoercion(parent, ip.String(), seen, receiverDiagnostics{debug: o.ReceiverDebug, observe: func(d SMBDiagnostic) {
+			if progress != nil {
+				progress(d.String())
+			}
+		}})
 		if err != nil {
 			return nil, err
 		}

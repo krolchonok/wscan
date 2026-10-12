@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/asn1"
+	"encoding/hex"
 	"errors"
 	"github.com/hirochachacha/go-smb2"
 	"github.com/oiweiwei/go-msrpc/ssp/credential"
@@ -19,7 +20,7 @@ func TestCoercionReceiverHandshake(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 	client.SetDeadline(time.Now().Add(3 * time.Second))
-	r := &coercionReceiver{events: map[string][]coercionEvent{}}
+	r := &coercionReceiver{debug: true, events: map[string][]coercionEvent{}}
 	done := make(chan struct{})
 	go func() { defer close(done); defer server.Close(); r.serve(ctx, server, "192.0.2.10") }()
 	request := func(command uint16, session uint64, body []byte) []byte {
@@ -83,6 +84,17 @@ func TestCoercionReceiverHandshake(t *testing.T) {
 	}
 	if strings.Contains(events[2].Identity, "offline-example-password") {
 		t.Fatal("secret leaked")
+	}
+	var diagnosticLog strings.Builder
+	for _, event := range r.diagnosticHistory("192.0.2.10") {
+		diagnosticLog.WriteString(event.String())
+		diagnosticLog.WriteByte('\n')
+	}
+	responseOffset, responseLength := int(le.Uint32(authenticate[24:])), int(le.Uint16(authenticate[20:]))
+	for _, secret := range []string{"audit", "LAB", "offline-example-password", hex.EncodeToString(authenticate[responseOffset : responseOffset+responseLength])} {
+		if secret != "" && strings.Contains(diagnosticLog.String(), secret) {
+			t.Fatal("authentication content leaked into diagnostics")
+		}
 	}
 }
 func TestNTLMIdentityRejectsInvalidBuffers(t *testing.T) {

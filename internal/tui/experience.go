@@ -319,7 +319,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if key == "g" && m.screen != "jobs" && !(m.screen == "service-inventory" && m.serviceInventoryEditing) {
 			m.jobsReturn = m.screen
-			m.jobIndex = 0
+			m.jobIndex = max(0, len(m.jobs)-1)
 			m.screen = "jobs"
 			return m, nil
 		}
@@ -560,14 +560,17 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 		switch m.focusCol {
 		case 0:
 			if len(m.hostOrder) > 0 {
+				m.rememberSelectedPort(services)
 				if m.hostIndex < 0 {
 					m.hostIndex = len(m.hostOrder) - 1
 				} else {
 					m.hostIndex--
 				}
-				m.serviceIndex, m.findingIndex = 0, 0
+				m.restoreSelectedPort()
+				m.findingIndex = 0
 			}
 		case 1:
+			m.preferredPort, m.preferredProtocol = 0, ""
 			if m.serviceIndex > -1 {
 				m.serviceIndex--
 				m.findingIndex = 0
@@ -581,14 +584,17 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 		switch m.focusCol {
 		case 0:
 			if len(m.hostOrder) > 0 {
+				m.rememberSelectedPort(services)
 				if m.hostIndex+1 >= len(m.hostOrder) {
 					m.hostIndex = -1
 				} else {
 					m.hostIndex++
 				}
-				m.serviceIndex, m.findingIndex = 0, 0
+				m.restoreSelectedPort()
+				m.findingIndex = 0
 			}
 		case 1:
+			m.preferredPort, m.preferredProtocol = 0, ""
 			if m.serviceIndex < 0 && len(services) > 0 {
 				m.serviceIndex = 0
 				m.findingIndex = 0

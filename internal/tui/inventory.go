@@ -311,6 +311,7 @@ func (m model) networkHosts(cidr string) []string {
 
 func (m *model) openHostScope(cidr string) {
 	m.hostNetwork = cidr
+	m.preferredPort, m.preferredProtocol = 0, ""
 	m.selectedHosts = nil
 	m.hostIndex, m.serviceIndex, m.findingIndex, m.focusCol = -1, -1, 0, 0
 	m.rebuildHostOrder()
@@ -400,6 +401,10 @@ func (m model) rawFindingsForService(host string, s domain.Service) []domain.Fin
 		findings = h.findings
 	}
 	for _, f := range findings {
+		if strings.HasPrefix(f.TemplateID, "adscan-") && allowed[strings.ToLower(f.MatchedAt)] && adFindingOnPort(f, s) {
+			out = append(out, f)
+			continue
+		}
 		if coercionResult(f) && s.Port == 445 && s.Protocol != "udp" && allowed[strings.ToLower(f.Target)] {
 			out = append(out, f)
 			continue
@@ -499,4 +504,62 @@ func uniqueStrings(in []string) []string {
 		}
 	}
 	return out
+}
+
+func portProtocol(protocol string) string {
+	if protocol == "" {
+		return "tcp"
+	}
+	return strings.ToLower(protocol)
+}
+func (m *model) rememberSelectedPort(services []domain.Service) {
+	if m.hostIndex >= 0 && m.serviceIndex >= 0 && m.serviceIndex < len(services) {
+		service := services[m.serviceIndex]
+		m.preferredPort, m.preferredProtocol = service.Port, portProtocol(service.Protocol)
+	}
+}
+func (m *model) restoreSelectedPort() {
+	m.serviceIndex = -1
+	services := m.servicesFor(m.currentHost())
+	if m.preferredPort == 0 {
+		return
+	}
+	for i, s := range services {
+		if s.Port == m.preferredPort && portProtocol(s.Protocol) == m.preferredProtocol {
+			m.serviceIndex = i
+			return
+		}
+	}
+}
+func (m model) selectedPortMissing() bool {
+	return m.hostIndex >= 0 && m.preferredPort > 0 && m.serviceIndex < 0
+}
+
+// AD inventory is saved against a host, not a matcher URL. Associate only
+// relevant AD facts with each service, including results saved by older builds.
+func adFindingOnPort(f domain.Finding, s domain.Service) bool {
+	if portProtocol(s.Protocol) != "tcp" {
+		return false
+	}
+	ldap := s.Port == 389 || s.Port == 636 || s.Port == 3268 || s.Port == 3269
+	switch f.TemplateID {
+	case "adscan-role-domain-controller":
+		return ldap || s.Port == 88 || s.Port == 464
+	case "adscan-role-global-catalog":
+		return s.Port == 3268 || s.Port == 3269
+	case "adscan-role-dns", "adscan-dns-srv":
+		return s.Port == 53
+	case "adscan-role-certificate-services":
+		return s.Port == 80 || s.Port == 443
+	case "adscan-role-ad-web-services":
+		return s.Port == 9389
+	case "adscan-role-windows-host":
+		return s.Port == 135 || s.Port == 139 || s.Port == 445 || s.Port == 3389
+	case "adscan-smb-anonymous-access":
+		return s.Port == 445
+	case "adscan-recon-summary":
+		return false
+	default:
+		return ldap
+	}
 }

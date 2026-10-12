@@ -89,6 +89,8 @@ type model struct {
 	inventory                map[string]*hostInfo
 	hostIndex                int // -1 means "All hosts"
 	serviceIndex             int
+	preferredPort            int
+	preferredProtocol        string
 	serviceInventoryIndex    int
 	serviceInventoryFilter   string
 	serviceInventoryProject  bool
@@ -141,6 +143,7 @@ type model struct {
 	adScanReturn                                     string
 	adScanJobID                                      int
 	adAccessReturn                                   string
+	adBloodHoundPort, adBloodHoundLimit              int
 	adAccessHost                                     string
 	adAccessDomain                                   string
 	adCoerceCallback                                 string
@@ -149,6 +152,7 @@ type model struct {
 	adAccessCred                                     int
 	adAccessJobID                                    int
 	adResponderJobID                                 int
+	responderDebug                                   bool
 	coerceActionIndex                                int
 	coerceCallbackAuto                               bool
 	coercePortGeneration                             int
@@ -314,6 +318,7 @@ func (m *model) openProject(p domain.Project) {
 		m.hostIndex = -1
 	}
 	m.serviceIndex = 0
+	m.preferredPort, m.preferredProtocol = 0, ""
 	m.findingIndex = 0
 	m.projectResultsSearch = ""
 	m.resultsScope = resultScope{}
@@ -702,6 +707,14 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adNetworks = append(m.adNetworks, network)
 			m.adNetworkIndex = len(m.adNetworks) - 1
 			m.message = "Выбрана подсеть " + network.CIDR + ". Нажми Enter для сканирования."
+		case "ad-bloodhound-limit":
+			limit, err := strconv.Atoi(value)
+			if err != nil || limit < 1 || limit > 50000 {
+				m.message = "Лимит BloodHound: 1–50000"
+				return m, nil
+			}
+			m.adBloodHoundLimit = limit
+			m.screen = "ad-access"
 		case "ad-access-host":
 			m.adAccessHost = value
 			m.screen = "ad-access"

@@ -185,7 +185,8 @@ func waitForJob(ch chan jobEvent) tea.Cmd {
 func (m *model) launch(kind, label string, targets []string, fn runFunc) {
 	m.jobSeq++
 	id := m.jobSeq
-	ctx, cancel := context.WithCancel(m.ctx)
+	parent := m.ctx
+	ctx, cancel := context.WithCancel(parent)
 	j := &job{
 		id:        id,
 		projectID: m.current.ID,
@@ -205,9 +206,13 @@ func (m *model) launch(kind, label string, targets []string, fn runFunc) {
 			if len(counts) == 2 {
 				ev.completed, ev.total = counts[0], counts[1]
 			}
+			logContext := ctx
+			if strings.Contains(stage, " [SMB] conn=") {
+				logContext = parent
+			}
 			select {
 			case ch <- ev:
-			case <-ctx.Done():
+			case <-logContext.Done():
 			}
 		})
 		ch <- jobEvent{id: id, done: true, result: res, err: err}

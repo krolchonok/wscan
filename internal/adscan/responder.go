@@ -14,7 +14,7 @@ var responderSessions = struct {
 	receivers map[string]*coercionReceiver
 }{receivers: map[string]*coercionReceiver{}}
 
-func receiverForCoercion(ctx context.Context, ip string, allowed map[string]bool) (*coercionReceiver, bool, error) {
+func receiverForCoercion(ctx context.Context, ip string, allowed map[string]bool, diagnostics ...receiverDiagnostics) (*coercionReceiver, bool, error) {
 	responderSessions.Lock()
 	defer responderSessions.Unlock()
 	if r := responderSessions.receivers[ip]; r != nil {
@@ -27,13 +27,19 @@ func receiverForCoercion(ctx context.Context, ip string, allowed map[string]bool
 		}
 		return r, false, nil
 	}
-	r, e := startCoercionReceiver(ctx, ip, allowed)
+	r, e := startCoercionReceiver(ctx, ip, allowed, diagnostics...)
 	return r, true, e
 }
 
 // RunResponder holds a standalone receiver until cancellation. It never causes
 // remote authentication itself. Coerce jobs in the same process can reuse it.
+type ResponderOptions struct{ Debug bool }
+
 func RunResponder(ctx context.Context, callback string, targets []string, progress func(string)) ([]AccessReport, error) {
+	return RunResponderWithOptions(ctx, callback, targets, ResponderOptions{}, progress)
+}
+
+func RunResponderWithOptions(ctx context.Context, callback string, targets []string, options ResponderOptions, progress func(string)) ([]AccessReport, error) {
 	ip := net.ParseIP(strings.TrimSpace(callback))
 	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
 		return nil, fmt.Errorf("укажи локальный IPv4 приёмника")
@@ -82,18 +88,16 @@ func RunResponder(ctx context.Context, callback string, targets []string, progre
 		responderSessions.Unlock()
 		return nil, fmt.Errorf("приёмник %s уже запущен", ip)
 	}
-	r, err := startCoercionReceiver(ctx, ip.String(), allowed)
+	r, err := startCoercionReceiver(ctx, ip.String(), allowed, receiverDiagnostics{debug: options.Debug, observe: func(d SMBDiagnostic) {
+		if progress != nil {
+			progress(d.String())
+		}
+	}})
 	if err != nil {
 		responderSessions.Unlock()
 		return nil, err
 	}
-	r.mu.Lock()
-	r.observe = func(host string, event coercionEvent) {
-		if progress != nil {
-			progress(fmt.Sprintf("Responder · %s · %s · %s", host, event.Stage, event.Identity))
-		}
-	}
-	r.mu.Unlock()
+
 	responderSessions.receivers[ip.String()] = r
 	responderSessions.Unlock()
 	if progress != nil {
@@ -115,7 +119,15 @@ func RunResponder(ctx context.Context, callback string, targets []string, progre
 			}
 			report.add("responder/"+event.Stage, "Responder · "+event.Stage, "observed", severity, fmt.Sprintf("%s · %s; идентичность заявлена клиентом, ответ криптографически не проверен", event.Time.Format(time.RFC3339Nano), event.Identity))
 		}
-		if len(events) == 0 {
+		diagnostics := r.diagnosticHistory(host)
+		if len(diagnostics) > 0 {
+			lines := make([]string, 0, len(diagnostics))
+			for _, event := range diagnostics {
+				lines = append(lines, event.String())
+			}
+			report.add("responder/diagnostics", "Responder · диагностика SMB/NTLM", "observed", "info", strings.Join(lines, "\n"))
+		}
+		if len(events) == 0 && len(diagnostics) == 0 {
 			report.add("responder/callback", "Responder · обратное соединение", "incomplete", "info", "Событий не получено; уязвимость не оценена")
 		}
 		reports = append(reports, report)

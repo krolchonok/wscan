@@ -24,12 +24,14 @@ var adAccessModes = []struct{ id, name string }{
 	{"asrep", "AS-REP: LDAP-кандидаты DONT_REQ_PREAUTH (без запроса билета)"},
 	{"sysvol", "SYSVOL / NETLOGON: обнаружение устаревших GPP cpassword (без чтения паролей)"},
 	{"ldap-security", "LDAP signing / LDAPS channel binding: проба с выбранной учёткой"},
+	{"bloodhound-ce", "BloodHound CE: удалённый сбор домена → ZIP (LDAP, без агента)"},
 }
 
 func (m *model) openADAccess() {
 	m.adAccessReturn = m.screen
 	m.adAccessHost, m.adAccessDomain = "", ""
 	m.adAccessIndex, m.adAccessCred = 0, -1
+	m.adBloodHoundPort, m.adBloodHoundLimit = 636, 5000
 	creds, err := m.store.ListCredentials(m.ctx, m.current.ID)
 	if err == nil {
 		m.adAccessCreds = creds
@@ -61,6 +63,20 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 		m.adAccessIndex = max(0, m.adAccessIndex-1)
 	case "down", "j":
 		m.adAccessIndex = min(len(adAccessModes)-1, m.adAccessIndex+1)
+	case "v":
+		return m.toggleResponderDebug()
+	case "l":
+		if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
+			if m.adBloodHoundPort == 389 {
+				m.adBloodHoundPort = 636
+			} else {
+				m.adBloodHoundPort = 389
+			}
+		}
+	case "n":
+		if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
+			m.startInput("ad-bloodhound-limit")
+		}
 	case "h":
 		m.startInput("ad-access-host")
 	case "r":
@@ -108,6 +124,13 @@ func (m model) viewADAccess(w int) string {
 		body += fmt.Sprintf("Приёмник: %s:445 · r изменить\nЦели Coerce: %d · %s\n\n", valueOr(m.adCoerceCallback, "не задан"), len(m.coercionTargets()), scope)
 	}
 	body += fmt.Sprintf("Responder: %s · p запустить/остановить · адрес: %s:445 (r)\n\n", m.responderStatus(), valueOr(m.adCoerceCallback, "не задан"))
+	if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
+		port, limit := m.bloodHoundSettings()
+		body += fmt.Sprintf("BloodHound CE · LDAP/%d (l) · лимит объектов/членов группы: %d (n)\n", port, limit)
+		body += "Область: выбранный домен; рабочие станции не опрашиваются.\nЭкспорт: " + filepath.Join(m.appDir, "exports", "bloodhound") + "\n"
+		body += "Не собираются: ACL, AD CS, сессии и локальные права.\n\n"
+	}
+	body += fmt.Sprintf("Диагностика Responder: %t · v переключить · журнал: g → Responder → r\n\n", m.responderDebug)
 	body += "↑/↓ выбрать проверку · Enter запустить · Esc назад\n\n"
 	for i, row := range adAccessModes {
 		body += renderListRow(row.name, i == m.adAccessIndex, w)
@@ -143,6 +166,14 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 		cred = m.adAccessCreds[m.adAccessCred]
 	}
 	o := adscan.AccessOptions{Host: strings.TrimSpace(m.adAccessHost), Domain: strings.TrimSpace(m.adAccessDomain), Mode: mode, Credential: cred, LDAPPort: 636, MaxObjects: 5000, ExportDir: filepath.Join(m.appDir, "exports", "ad")}
+	if mode == "bloodhound-ce" {
+		if cred.Username == "" {
+			m.message = "Выбери доменную учётку (c): BloodHound не собирается анонимно"
+			return m, nil
+		}
+		o.LDAPPort, o.MaxObjects = m.bloodHoundSettings()
+		o.ExportDir = filepath.Join(m.appDir, "exports", "bloodhound")
+	}
 	worker := m
 	m.adAccessJobID = m.jobSeq + 1
 	m.message = ""
@@ -159,7 +190,12 @@ func (m model) runADAccess(o adscan.AccessOptions) runFunc {
 		}
 		status := "completed"
 		defer func() { _ = m.store.FinishRun(context.Background(), runID, status) }()
-		report, err := adscan.RunAccess(ctx, o)
+		var report adscan.AccessReport
+		if o.Mode == "bloodhound-ce" {
+			report, err = adscan.RunBloodHound(ctx, adscan.BloodHoundOptions{AccessOptions: o, Progress: func(s string) { emit(s) }})
+		} else {
+			report, err = adscan.RunAccess(ctx, o)
+		}
 		if err != nil {
 			status = "failed"
 			return engine.Result{RunID: runID, TargetsScanned: 1, Errors: []string{err.Error()}}, err
@@ -259,7 +295,7 @@ func (m model) startCoercion() (tea.Model, tea.Cmd) {
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = m.adAccessCreds[m.adAccessCred]
 	}
-	o := adscan.CoercionOptions{DiscoverOnly: discoverOnly, Targets: targets, Callback: strings.TrimSpace(m.adCoerceCallback), Credential: adscan.AccessOptions{Domain: strings.TrimSpace(m.adAccessDomain), Credential: cred}}
+	o := adscan.CoercionOptions{ReceiverDebug: m.responderDebug, DiscoverOnly: discoverOnly, Targets: targets, Callback: strings.TrimSpace(m.adCoerceCallback), Credential: adscan.AccessOptions{Domain: strings.TrimSpace(m.adAccessDomain), Credential: cred}}
 	worker := m
 	m.adAccessJobID = m.jobSeq + 1
 	m.message = ""
@@ -291,7 +327,7 @@ func (m model) runCoercion(o adscan.CoercionOptions, leases ...*adscan.PortLease
 		var reports []adscan.AccessReport
 		var scanErr error
 		if o.Methods != nil && len(o.Methods) == 1 && o.Methods[0] == "responder" {
-			reports, scanErr = adscan.RunResponder(ctx, o.Callback, o.Targets, func(s string) { emit(s) })
+			reports, scanErr = adscan.RunResponderWithOptions(ctx, o.Callback, o.Targets, adscan.ResponderOptions{Debug: o.ReceiverDebug}, func(s string) { emit(s) })
 		} else {
 			reports, scanErr = adscan.RunCoercion(ctx, o, func(s string) { emit(s) })
 		}
@@ -350,7 +386,7 @@ func (m model) toggleResponder() (tea.Model, tea.Cmd) {
 		m.message = "Выбери машины с 445 или укажи один хост (h)"
 		return m, nil
 	}
-	o := adscan.CoercionOptions{Targets: targets, Callback: strings.TrimSpace(m.adCoerceCallback), Methods: []string{"responder"}}
+	o := adscan.CoercionOptions{ReceiverDebug: m.responderDebug, Targets: targets, Callback: strings.TrimSpace(m.adCoerceCallback), Methods: []string{"responder"}}
 	worker := m
 	if !m.coercePortApproved {
 		return m.requestCoercionPort("responder")
@@ -368,4 +404,25 @@ func (m model) responderRunningAtCallback() bool {
 		return strings.Contains(j.label, m.adCoerceCallback+":445")
 	}
 	return false
+}
+
+func (m model) bloodHoundSettings() (int, int) {
+	port, limit := m.adBloodHoundPort, m.adBloodHoundLimit
+	if port != 389 && port != 636 {
+		port = 636
+	}
+	if limit < 1 || limit > 50000 {
+		limit = 5000
+	}
+	return port, limit
+}
+
+func (m model) toggleResponderDebug() (tea.Model, tea.Cmd) {
+	if j := m.jobByID(m.adResponderJobID); j != nil && j.status == statusRunning {
+		m.message = "Для смены диагностики останови Responder и запусти снова"
+		return m, nil
+	}
+	m.responderDebug = !m.responderDebug
+	m.message = fmt.Sprintf("Диагностика Responder: %t · подробные события в журнале задачи", m.responderDebug)
+	return m, nil
 }

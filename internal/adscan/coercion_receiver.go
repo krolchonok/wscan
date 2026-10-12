@@ -21,23 +21,31 @@ type coercionEvent struct {
 	Stage, Identity string
 }
 type coercionReceiver struct {
-	listener    net.Listener
-	mu          sync.Mutex
-	connections map[net.Conn]bool
-	events      map[string][]coercionEvent
-	allowed     map[string]bool
-	wg          sync.WaitGroup
-	cancel      context.CancelFunc
-	observe     func(string, coercionEvent)
+	listener          net.Listener
+	mu                sync.Mutex
+	connections       map[net.Conn]bool
+	events            map[string][]coercionEvent
+	allowed           map[string]bool
+	wg                sync.WaitGroup
+	cancel            context.CancelFunc
+	observe           func(string, coercionEvent)
+	diagnosticMu      sync.Mutex
+	diagnostics       map[string][]SMBDiagnostic
+	debug             bool
+	observeDiagnostic func(SMBDiagnostic)
 }
 
-func startCoercionReceiver(parent context.Context, ip string, allowed map[string]bool) (*coercionReceiver, error) {
+func startCoercionReceiver(parent context.Context, ip string, allowed map[string]bool, diagnostics ...receiverDiagnostics) (*coercionReceiver, error) {
 	l, e := net.Listen("tcp4", net.JoinHostPort(ip, "445"))
 	if e != nil {
 		return nil, fmt.Errorf("приёмник SMB %s:445: %w (порт должен быть свободен; нужны CAP_NET_BIND_SERVICE или root; см. COERCION.md)", ip, e)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	r := &coercionReceiver{listener: l, connections: map[net.Conn]bool{}, events: map[string][]coercionEvent{}, allowed: allowed, cancel: cancel}
+	if len(diagnostics) > 0 {
+		r.debug = diagnostics[0].debug
+		r.observeDiagnostic = diagnostics[0].observe
+	}
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -55,7 +63,24 @@ func startCoercionReceiver(parent context.Context, ip string, allowed map[string
 			}
 			r.mu.Unlock()
 			if !admit {
+				reason := "OUTSIDE_SCOPE"
+				if r.allowed[host] {
+					reason = "CONNECTION_LIMIT"
+				}
+				if ctx.Err() != nil {
+					reason = "SERVER_CANCELLED"
+				}
+				event := SMBDiagnostic{Time: time.Now(), ConnectionID: smbConnectionSequence.Add(1), Remote: c.RemoteAddr().String(), Stage: "CONNECTED", LastState: "CONNECTED"}
+				r.diagnostic(host, event)
+				event.Time = time.Now()
+				event.Stage = "CONNECTION_REJECTED"
+				event.Reason = reason
+				r.diagnostic(host, event)
 				c.Close()
+				event.Time = time.Now()
+				event.Stage = "SESSION_CLOSED"
+				event.LastState = "CONNECTION_REJECTED"
+				r.diagnostic(host, event)
 				continue
 			}
 			go func() {
@@ -200,48 +225,90 @@ func smbResponse(request []byte, command uint16, status uint32, session uint64, 
 }
 func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 	c.SetDeadline(time.Now().Add(12 * time.Second))
+	id := smbConnectionSequence.Add(1)
+	remote := c.RemoteAddr().String()
+	last, reason := "CONNECTED", "UNKNOWN"
+	dialect := uint16(0)
+	emit := func(stage string, change func(*SMBDiagnostic)) {
+		event := SMBDiagnostic{Time: time.Now(), ConnectionID: id, Remote: remote, Stage: stage, LastState: last, Dialect: dialect}
+		if change != nil {
+			change(&event)
+		}
+		r.diagnostic(host, event)
+	}
+	emit("CONNECTED", nil)
+	defer func() {
+		if recover() != nil {
+			reason = "PARSER_PANIC"
+			emit("PROTOCOL_ERROR", func(d *SMBDiagnostic) { d.Reason = reason })
+		}
+		emit("SESSION_CLOSED", func(d *SMBDiagnostic) { d.Reason = reason })
+	}()
+	protocol := func(why string) { reason = why; emit("PROTOCOL_ERROR", func(d *SMBDiagnostic) { d.Reason = why }) }
+	ioFailure := func(err error) {
+		var stage string
+		stage, reason = smbIOReason(ctx, err)
+		if stage != "" {
+			emit(stage, func(d *SMBDiagnostic) { d.Reason = reason })
+		}
+	}
+	write := func(request []byte, command uint16, status uint32, session uint64, body []byte, stage string) bool {
+		if err := smbWrite(c, smbResponse(request, command, status, session, body)); err != nil {
+			ioFailure(err)
+			return false
+		}
+		last = stage
+		emit(stage, func(d *SMBDiagnostic) { d.Status = &status })
+		return true
+	}
 	var sessionBytes [8]byte
-	if _, e := rand.Read(sessionBytes[:]); e != nil {
+	if _, err := rand.Read(sessionBytes[:]); err != nil {
+		emit("SERVER_ERROR", func(d *SMBDiagnostic) { d.Reason = "CHALLENGE_RANDOM_SOURCE_FAILED" })
 		return
 	}
 	session := le.Uint64(sessionBytes[:]) | 1
 	negotiated, challenged := false, false
 	for step := 0; step < 6; step++ {
-		b, e := smbRead(c)
-		if e != nil {
+		b, err := smbRead(c)
+		if err != nil {
+			ioFailure(err)
 			if challenged {
-				r.record(host, "incomplete-auth", "соединение завершилось после NTLM challenge: "+e.Error())
+				r.record(host, "incomplete-auth", "соединение завершилось после NTLM challenge: "+reason)
 			}
 			return
 		}
-		// SMB1 multi-protocol negotiate is answered with wildcard SMB2, inviting
-		// a proper SMB2 negotiate. SMB1 sessions are not implemented.
 		if bytes.Equal(b[:4], []byte{0xff, 'S', 'M', 'B'}) {
+			emit("NEGOTIATE_REQUEST", nil)
 			if b[4] != 0x72 {
+				protocol("UNSUPPORTED_SMB1_COMMAND")
 				return
 			}
 			body := make([]byte, 64)
 			le.PutUint16(body, 65)
 			le.PutUint16(body[4:], 0x02ff)
-			if smbWrite(c, smbResponse(nil, 0, 0, 0, body)) != nil {
+			if !write(nil, 0, 0, 0, body, "NEGOTIATE_RESPONSE") {
 				return
 			}
 			continue
 		}
 		if !bytes.Equal(b[:4], []byte{0xfe, 'S', 'M', 'B'}) || le.Uint16(b[4:]) != 64 || le.Uint32(b[20:]) != 0 {
+			protocol("INVALID_OR_UNSUPPORTED_SMB2_HEADER")
 			return
 		}
 		command := le.Uint16(b[12:])
 		switch command {
 		case 0:
+			emit("NEGOTIATE_REQUEST", nil)
 			if len(b) < 100 || le.Uint16(b[64:]) != 36 {
+				protocol("INVALID_NEGOTIATE_REQUEST")
 				return
 			}
 			count := int(le.Uint16(b[66:]))
 			if count < 1 || count > 64 || 100+2*count > len(b) {
+				protocol("INVALID_DIALECT_LIST")
 				return
 			}
-			dialect := uint16(0)
+			dialect = 0
 			for i := 0; i < count; i++ {
 				d := le.Uint16(b[100+i*2:])
 				if d == 0x210 {
@@ -253,15 +320,16 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 			}
 			if dialect == 0 {
 				r.record(host, "unsupported-dialect", "SMB 2.0.2/2.1 отсутствует; результат неполный")
+				protocol("UNSUPPORTED_DIALECT")
 				return
 			}
-			// SPNEGO NegTokenInit advertising only the NTLM mechanism.
 			token := spnegoNegotiate()
 			body := make([]byte, 64)
 			le.PutUint16(body, 65)
 			le.PutUint16(body[2:], 1)
 			le.PutUint16(body[4:], dialect)
-			if _, e = rand.Read(body[8:24]); e != nil {
+			if _, err = rand.Read(body[8:24]); err != nil {
+				emit("SERVER_ERROR", func(d *SMBDiagnostic) { d.Reason = "SERVER_RANDOM_SOURCE_FAILED" })
 				return
 			}
 			for _, off := range []int{28, 32, 36} {
@@ -270,35 +338,45 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 			le.PutUint64(body[40:], uint64(time.Now().UnixNano()/100)+116444736000000000)
 			le.PutUint16(body[56:], 128)
 			le.PutUint16(body[58:], uint16(len(token)))
-			if smbWrite(c, smbResponse(b, 0, 0, 0, append(body, token...))) != nil {
+			if !write(b, 0, 0, 0, append(body, token...), "NEGOTIATE_RESPONSE") {
 				return
 			}
 			negotiated = true
 			r.record(host, "smb-negotiated", fmt.Sprintf("dialect %#x", dialect))
 		case 1:
+			emit("SESSION_SETUP", nil)
 			if !negotiated || len(b) < 88 || le.Uint16(b[64:]) != 25 {
+				protocol("INVALID_SESSION_SETUP_OR_ORDER")
 				return
 			}
 			off, n := int(le.Uint16(b[76:])), int(le.Uint16(b[78:]))
 			if off < 88 || n < 12 || off+n > len(b) {
+				protocol("INVALID_SECURITY_TOKEN_BOUNDS")
 				return
 			}
 			token := b[off : off+n]
 			index := bytes.Index(token, []byte("NTLMSSP\x00"))
 			if index < 0 {
+				protocol("NTLMSSP_TOKEN_NOT_FOUND")
 				return
 			}
 			token = token[index:]
 			if len(token) < 12 {
+				protocol("TRUNCATED_NTLM_HEADER")
 				return
 			}
-			switch le.Uint32(token[8:]) {
+			typ := le.Uint32(token[8:])
+			emit("NTLM_MESSAGE", func(d *SMBDiagnostic) { d.NTLMType = typ })
+			switch typ {
 			case 1:
+				emit("NTLM_NEGOTIATE", func(d *SMBDiagnostic) { d.NTLMType = 1 })
 				if challenged {
+					protocol("REPEATED_NTLM_NEGOTIATE")
 					return
 				}
-				challenge, e := ntlmChallenge(ctx, token)
-				if e != nil {
+				challenge, err := ntlmChallenge(ctx, token)
+				if err != nil {
+					protocol("INVALID_NTLM_NEGOTIATE")
 					return
 				}
 				challenge = spnegoChallenge(challenge)
@@ -306,36 +384,71 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 				le.PutUint16(body, 9)
 				le.PutUint16(body[4:], 72)
 				le.PutUint16(body[6:], uint16(len(challenge)))
-				if smbWrite(c, smbResponse(b, 1, 0xc0000016, session, append(body, challenge...))) != nil {
+				if !write(b, 1, 0xc0000016, session, append(body, challenge...), "CHALLENGE_SENT") {
 					return
 				}
 				challenged = true
 				r.record(host, "ntlm-negotiate", "")
 			case 3:
-				if !challenged || le.Uint64(b[40:]) != session || len(token) < 64 {
-					return
-				}
-				// Extract only identity, never retain challenge responses or a crackable hash.
-				identity, e := ntlmIdentity(token)
-				if e != nil {
-					stage := "invalid-authenticate"
-					if errors.Is(e, errAnonymousNTLM) {
-						stage = "anonymous-authenticate"
+				emit("AUTH_RECEIVED", func(d *SMBDiagnostic) {
+					d.NTLMType = 3
+					if len(token) >= 64 {
+						domain, user, response := int(le.Uint16(token[28:])), int(le.Uint16(token[36:])), int(le.Uint16(token[20:]))
+						d.DomainLength = &domain
+						d.UserLength = &user
+						d.ResponseLength = &response
 					}
-					r.record(host, stage, e.Error())
-					smbWrite(c, smbResponse(b, 1, 0xc000006d, session, []byte{9, 0, 0, 0, 0, 0, 0, 0}))
+				})
+				if !challenged || le.Uint64(b[40:]) != session || len(token) < 64 {
+					protocol("INVALID_AUTHENTICATE_OR_SESSION")
 					return
 				}
-				r.record(host, "ntlm-authenticate", identity)
-				smbWrite(c, smbResponse(b, 1, 0xc000006d, session, []byte{9, 0, 0, 0, 0, 0, 0, 0}))
+				if le.Uint16(token[36:]) == 0 {
+					emit("USER_EMPTY", nil)
+				}
+				if le.Uint16(token[28:]) == 0 {
+					emit("DOMAIN_EMPTY", nil)
+				}
+				if le.Uint16(token[20:]) == 0 {
+					emit("EMPTY_NTLM_RESPONSE", nil)
+				}
+				// Preserve the existing identity validation and rejecting wire response.
+				identity, err := ntlmIdentity(token)
+				if err != nil {
+					stage := "invalid-authenticate"
+					if errors.Is(err, errAnonymousNTLM) {
+						stage = "anonymous-authenticate"
+						last = "ANONYMOUS_AUTH_ATTEMPT"
+						emit("ANONYMOUS_AUTH_ATTEMPT", nil)
+					} else {
+						protocol("INVALID_NTLM_AUTHENTICATE")
+					}
+					r.record(host, stage, err.Error())
+				} else {
+					last = "AUTH_RECEIVED"
+					r.record(host, "ntlm-authenticate", identity)
+				}
+				if !write(b, 1, 0xc000006d, session, []byte{9, 0, 0, 0, 0, 0, 0, 0}, "AUTH_FAILED") {
+					return
+				}
+				reason = "SERVER_REJECTED_AUTH"
 				return
 			default:
+				protocol("UNSUPPORTED_NTLM_MESSAGE_TYPE")
 				return
 			}
+		case 2:
+			// The original receiver also closes on LOGOFF without sending a response.
+			emit("LOGOFF_RECEIVED", nil)
+			last = "LOGOFF_RECEIVED"
+			reason = "CLIENT_LOGOFF"
+			return
 		default:
+			protocol("UNSUPPORTED_SMB_COMMAND")
 			return
 		}
 	}
+	protocol("PROTOCOL_STEP_LIMIT")
 }
 
 var errAnonymousNTLM = errors.New("анонимный NTLM Authenticate: имя пользователя и NTLM-ответ отсутствуют; учётные данные не получены")

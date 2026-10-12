@@ -208,12 +208,15 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 	defer func() {
 		_ = m.store.FinishRun(context.Background(), runID, status)
 	}()
-	result := engine.Result{RunID: runID, TargetsScanned: 1}
+	result := engine.Result{RunID: runID, TargetsScanned: 1, Errors: append([]string(nil), dnsErrors...)}
 	result.TargetsScanned = details.HostsScanned
 	if len(details.Hosts) > 0 {
 		result.HostNames = make(map[string][]string)
 	}
 	for _, node := range details.Hosts {
+		if node.LDAPMessage != "" {
+			emit("LDAP · " + node.Address + " · " + node.LDAPMessage)
+		}
 		if node.HostName != "" {
 			result.HostNames[node.Address] = []string{node.HostName}
 		}
@@ -227,7 +230,10 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 	for _, node := range details.Hosts {
 		for _, port := range node.Ports {
 			name, portService := adPortNames(port)
-			product := "Microsoft Active Directory"
+			product := ""
+			if node.Domain != "" && (port == 389 || port == 636 || port == 3268 || port == 3269 || port == 88 || port == 464 || port == 9389) {
+				product = "Active Directory"
+			}
 			if roleContains(node.Roles, "AD CS") && (port == 80 || port == 443) {
 				product = "Microsoft AD CS"
 			}
@@ -253,7 +259,7 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 				}
 			}
 			finding := domain.Finding{
-				Description: description, MatcherName: "ad-role-" + adRoleKey(role), Protocol: "ad",
+				Description: description, Evidence: description, MatcherName: "ad-role-" + adRoleKey(role), Protocol: "ad",
 				TemplateID: "adscan-role-" + adRoleKey(role), Name: role, Severity: "info",
 				Target: cidr, MatchedAt: node.Address, Risk: "Роль определена пассивной проверкой доступных AD-служб.", Time: time.Now().UTC(),
 			}
@@ -263,8 +269,11 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 			}
 			result.Findings = append(result.Findings, finding)
 		}
-		if node.Domain != "" || node.HostName != "" {
+		if node.Domain != "" || node.HostName != "" || node.LDAPMessage != "" {
 			description := "Анонимный LDAP RootDSE"
+			if node.LDAPMessage != "" {
+				description += "; " + node.LDAPMessage
+			}
 			if node.Domain != "" {
 				description += "; домен: " + node.Domain
 			}
@@ -275,8 +284,9 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 				Description: description, MatcherName: "anonymous-rootdse", Protocol: "ldap",
 				TemplateID: "adscan-rootdse", Name: "Сведения Active Directory из RootDSE",
 				Severity: "info", Target: cidr, MatchedAt: node.Address,
-				Risk: "LDAP-сервер раскрывает базовые сведения каталога без аутентификации.",
-				Time: time.Now().UTC(),
+				Evidence: description,
+				Risk:     "Анонимная проверка RootDSE; отсутствие данных не означает отсутствия AD.",
+				Time:     time.Now().UTC(),
 			}
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
@@ -358,6 +368,7 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 		status = "cancelled"
 		return result, &details, projectID, projectName, ctx.Err()
 	}
+	result.Errors = append(result.Errors, checkErrors...)
 	for _, scanErr := range checkErrors {
 		emit("Некоторые SMB/RDP-проверки завершились с ошибкой: " + scanErr)
 	}
@@ -399,8 +410,16 @@ func adDNSFindings(cidr string, records []adscan.SRVRecord) []domain.Finding {
 func adReconSummary(cidr string, result adscan.Result, findings []domain.Finding) domain.Finding {
 	var dc, gc, dns, adcs, smbAnonymous int
 	users, asrep, spn := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	var domains, controllers, ldapStatuses []string
 	for _, host := range result.Hosts {
+		if host.Domain != "" {
+			domains = append(domains, host.Domain)
+		}
+		if host.LDAPMessage != "" {
+			ldapStatuses = append(ldapStatuses, host.Address+": "+host.LDAPMessage)
+		}
 		if roleContains(host.Roles, "Контроллер домена") {
+			controllers = append(controllers, host.Address+" "+host.HostName)
 			dc++
 		}
 		if roleContains(host.Roles, "Global Catalog") {
@@ -444,6 +463,15 @@ func adReconSummary(cidr string, result adscan.Result, findings []domain.Finding
 	}
 	evidence := fmt.Sprintf("Узлы с AD/Windows-службами: %d из %d адресов; DC: %d; Global Catalog: %d; DNS: %d; AD CS: %d; анонимные SMB: %d; LDAP-учётки: %d; AS-REP кандидаты: %d; SPN-кандидаты: %d; SRV-записи: %d; риск-находки: %d. %s",
 		len(result.Hosts), result.HostsScanned, dc, gc, dns, adcs, smbAnonymous, len(users), len(asrep), len(spn), len(result.DNSRecords), risks, priority)
+	if len(domains) > 0 {
+		evidence += "\nДомены: " + strings.Join(uniqueStrings(domains), ", ")
+	}
+	if len(controllers) > 0 {
+		evidence += "\nКонтроллеры: " + strings.Join(controllers, ", ")
+	}
+	if len(ldapStatuses) > 0 {
+		evidence += "\nLDAP:\n" + strings.Join(ldapStatuses, "\n")
+	}
 	return adEvidenceFinding(cidr, cidr, "recon-summary", "Сводка первичной AD-разведки", evidence, "Краткая навигация по результатам этого этапа; выводы по учёткам и уязвимостям нужно перепроверять перед дальнейшей работой.")
 }
 
@@ -598,7 +626,7 @@ func accountSample(names []string) string {
 
 func adEvidenceFinding(cidr, host, key, name, evidence, risk string) domain.Finding {
 	return domain.Finding{
-		Description: evidence, MatcherName: "ad-" + key, Protocol: "ad",
+		Description: evidence, MatcherName: "ad-" + key, Protocol: "ad", Evidence: evidence,
 		TemplateID: "adscan-" + key, Name: name, Severity: "info",
 		Target: cidr, MatchedAt: host, Risk: risk, Time: time.Now().UTC(),
 	}

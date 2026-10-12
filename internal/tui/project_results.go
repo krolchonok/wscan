@@ -19,7 +19,7 @@ func (m model) filteredProjectFindings() []domain.Finding {
 	var out []domain.Finding
 	for _, f := range m.scopedResults() {
 		filter := m.projectResultsFilter
-		if filter == "important" && resultClass(f) == "Сведения" && f.TemplateID != "ui/coercion-summary" {
+		if filter == "important" && resultClass(f) == "Сведения" && f.TemplateID != "ui/coercion-summary" && !(strings.HasPrefix(f.TemplateID, "adscan-") || strings.HasPrefix(f.TemplateID, "ad-access/bloodhound-ce")) {
 			continue
 		}
 		if filter == "risk" && resultClass(f) != "Риск" {

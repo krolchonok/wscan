@@ -110,6 +110,8 @@ func (m model) updateCoercionSetup(key string) (tea.Model, tea.Cmd) {
 		m.startInput("ad-access-domain")
 	case "c":
 		return m.updateADAccess("c")
+	case "v":
+		return m.toggleResponderDebug()
 	case "p":
 		return m.toggleResponder()
 	case "enter":
@@ -141,6 +143,7 @@ func (m model) viewCoercionSetup(w int) string {
 		origin = "эта машина, адрес по маршруту к цели"
 	}
 	body := headingStyle.Render("Coerce / Responder") + fmt.Sprintf("\n\nЦель: %s · TCP/445\nПриёмник: %s:445 · %s · r изменить\nУчётка: %s\nДомен учётки: %s · d изменить (для локальной можно оставить пустым)\nResponder: %s\n\n", m.adAccessHost, receiver, origin, cred, valueOr(m.adAccessDomain, "не задан"), m.responderStatus())
+	body += fmt.Sprintf("Диагностика SMB/NTLM: %t · v переключить · журнал: g → Responder → r\n\n", m.responderDebug)
 	responderAction := "Запустить Responder на этой машине"
 	if j := m.jobByID(m.adResponderJobID); j != nil && j.status == statusRunning {
 		responderAction = "Остановить Responder и сохранить события"

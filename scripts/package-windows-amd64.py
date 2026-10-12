@@ -31,7 +31,7 @@ def main():
         shutil.copy2(root / "start.cmd", bundle / "start.cmd")
         shutil.copytree(root / "tools" / "winpeas", bundle / "tools" / "winpeas")
         for name in ["TRANSFER", "WINDOWS", "KNOWN_TEST_FAILURES", "ENGINE_POLICY_AUDIT",
-                     "SUPPORTED", "COERCION", "RESULTS", "GUI_REFACTOR"]:
+                     "SUPPORTED", "COERCION", "BLOODHOUND", "RESULTS", "GUI_REFACTOR"]:
             shutil.copy2(root / "docs" / f"{name}.md", bundle / f"{name}.md")
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
             for path in sorted(bundle.rglob("*")):
