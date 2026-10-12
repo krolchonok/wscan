@@ -16,7 +16,7 @@ import (
 )
 
 func (m Worker) adResultProject(ctx context.Context, cidr string, details adscan.Result) (int64, string, error) {
-	targets := []string{cidr}
+	targets := strings.Fields(cidr)
 	for _, node := range details.Hosts {
 		targets = append(targets, node.Address)
 	}

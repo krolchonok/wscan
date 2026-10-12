@@ -98,3 +98,81 @@ func TestOwnerLockRejectsSecondExecutor(t *testing.T) {
 	}
 	again()
 }
+
+func TestADProfileUsesTwoProjectHostsWithoutCIDR(t *testing.T) {
+	s := testService(t)
+	ctx := context.Background()
+	targets := []string{"127.0.0.2", "127.0.0.3"}
+	id, err := s.CreateProject(ctx, "two AD hosts", targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.StartScan(ctx, ScanRequest{ProjectID: id, Spec: Spec{Kind: "ad-scan", TemplateIDs: []string{"unrelated-project-template"}}}, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitJob(t, s.Jobs, job.ID)
+	if finished.Status != "done" {
+		t.Fatalf("AD job failed: %+v", finished)
+	}
+	if finished.Outcome.AD.HostsScanned != 2 {
+		t.Fatalf("scanned %d hosts, want 2", finished.Outcome.AD.HostsScanned)
+	}
+	project, err := s.Project(ctx, id)
+	if err != nil || len(project.Targets) != 2 {
+		t.Fatalf("scope expanded: %+v %v", project.Targets, err)
+	}
+	for _, target := range project.Targets {
+		if target != targets[0] && target != targets[1] {
+			t.Fatalf("unexpected scope entry %q", target)
+		}
+	}
+}
+
+func TestFullProfileHonorsExplicitPortsOverAllPorts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "local full fixture") }))
+	defer server.Close()
+	host, portText, _ := net.SplitHostPort(server.Listener.Addr().String())
+	port, _ := strconv.Atoi(portText)
+	s := testService(t)
+	s.entries = []catalog.Entry{} // An empty local catalogue; this fixture exercises discovery only.
+	id, err := s.CreateProject(context.Background(), "full fixture", []string{host})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.Project(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.AllPorts = true
+	project.LockoutMaxAttempts = domain.DefaultLockoutMaxAttempts
+	project.LockoutWindowMinutes = domain.DefaultLockoutWindowMinutes
+	if err := s.SaveSettings(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.StartScan(context.Background(), ScanRequest{ProjectID: id, Spec: Spec{Kind: "full", Hosts: []string{host}, DiscPorts: []int{port}, DiscNoVersion: true}}, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, s.Jobs, job.ID)
+	if done.Status != "done" {
+		t.Fatalf("full failed: %+v", done)
+	}
+	if len(done.Outcome.Result.Services) != 1 || done.Outcome.Result.Services[0].Port != port {
+		t.Fatalf("full ignored explicit port: %+v", done.Outcome.Result.Services)
+	}
+}
+
+func TestEmptyChecksFailBeforeCreatingJob(t *testing.T) {
+	s := testService(t)
+	id, err := s.CreateProject(context.Background(), "empty checks", []string{"127.0.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartScan(context.Background(), ScanRequest{ProjectID: id, Spec: Spec{Kind: "checks"}}, "web", ""); err == nil {
+		t.Fatal("empty checks accepted")
+	}
+	if len(s.Jobs.List()) != 0 {
+		t.Fatal("invalid request created a failed job")
+	}
+}

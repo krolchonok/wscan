@@ -241,6 +241,11 @@ func portCompatibleTemplateIDs(entries []catalog.Entry, service domain.Service, 
 }
 
 func (m Worker) runFull(hosts []string) RunFunc {
+	return m.runFullSpec(Spec{Hosts: hosts})
+}
+
+func (m Worker) runFullSpec(spec Spec) RunFunc {
+	hosts := spec.Hosts
 	return func(ctx context.Context, emit Reporter) (engine.Result, error) {
 		emit(fmt.Sprintf("полный скан: discovery + %d проверок…", len(m.current.TemplateIDs)))
 		p := m.current
@@ -258,7 +263,7 @@ func (m Worker) runFull(hosts []string) RunFunc {
 		}
 		p.Targets = uniqueStrings(expanded)
 		templates, nseIDs, loadErrs := m.compileTemplatesGrouped(ctx, m.current.TemplateIDs)
-		discoverer := discovery.Scanner{Config: discovery.Config{LibraryDir: m.cat.LibraryDir(), RPS: p.DiscoveryRPS, Concurrency: p.DiscoveryConcurrency, AllPorts: p.AllPorts, Progress: func(target string, done, total int) { emit("Порты: "+target, done, total) }}}
+		discoverer := discovery.Scanner{Config: discovery.Config{LibraryDir: m.cat.LibraryDir(), RPS: p.DiscoveryRPS, Concurrency: p.DiscoveryConcurrency, AllPorts: p.AllPorts && len(spec.DiscPorts) == 0, Ports: spec.DiscPorts, UDPPorts: spec.DiscUDPPorts, NoVersion: spec.DiscNoVersion, SkipTCP: spec.DiscSkipTCP, Progress: func(target string, done, total int) { emit("Порты: "+target, done, total) }}}
 		runner := workflow.Runner{Discovery: discoverer, HTTP: reportingChecks{m.scanner, emit}}
 		res, err := runner.Run(ctx, p, templates)
 		if err != nil {

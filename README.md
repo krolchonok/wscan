@@ -4,6 +4,7 @@
 Готовые сборки доступны в Releases. [Перенос и сборка](docs/TRANSFER.md).
 [Что поддерживается и что нет](docs/SUPPORTED.md): команда `wscan capabilities`.
 [Свежая совместимость каталога](docs/CATALOG_COVERAGE.md).
+[Пошаговая инструкция: что делать и куда нажимать](docs/USER_GUIDE.md).
 [Первичная AD-разведка](docs/AD_RECON.md).
 [План автоматизации, TUI и Web](docs/AUTOMATION_UI_WEB_PLAN.md) · [макет интерфейса](docs/automation-ui-preview.html).
 Библиотека проверок хранится отдельно: https://github.com/krolchonok/wscan-templates.

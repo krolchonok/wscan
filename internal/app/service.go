@@ -83,15 +83,20 @@ func (s *Service) StartScan(ctx context.Context, r ScanRequest, source, key stri
 		return Job{}, fmt.Errorf("выберите проект")
 	}
 	if r.Spec.Kind == "ad-scan" {
-		network, err := adscan.ValidatePrivateSubnet(r.CIDR)
-		if err != nil {
+		if len(r.Spec.Hosts) == 0 {
+			r.Spec.Hosts = strings.Fields(r.CIDR)
+		}
+		if len(r.Spec.Hosts) == 0 {
+			r.Spec.Hosts = append([]string(nil), p.Targets...)
+		}
+		if err := adscan.ValidateTargets(r.Spec.Hosts); err != nil {
 			return Job{}, err
 		}
-		r.CIDR = network.CIDR
+		r.CIDR = strings.Join(r.Spec.Hosts, " ")
 		if _, err := adscan.ValidateDNSOptions(r.DNS); err != nil {
 			return Job{}, err
 		}
-		r.Spec.Hosts = []string{r.CIDR}
+		r.Spec.TemplateIDs = nil
 	} else {
 		switch r.Spec.Kind {
 		case "discover", "checks", "full", "port", "bulk-port", "alive-hosts", "ptr":
@@ -124,6 +129,12 @@ func (s *Service) StartScan(ctx context.Context, r ScanRequest, source, key stri
 		if err != nil {
 			return Job{}, err
 		}
+	}
+	if r.Spec.Kind == "checks" && len(r.Spec.TemplateIDs) == 0 {
+		r.Spec.TemplateIDs = append([]string(nil), p.TemplateIDs...)
+	}
+	if r.Spec.Kind == "checks" && len(r.Spec.TemplateIDs) == 0 {
+		return Job{}, fmt.Errorf("проверки не выбраны: откройте обзор → Выбрать проверки")
 	}
 	if r.Spec.Kind == "full" {
 		if len(r.Spec.TemplateIDs) > 0 {
@@ -177,6 +188,9 @@ func (s *Service) StartScan(ctx context.Context, r ScanRequest, source, key stri
 		r.Spec.Label = operationLabel(r.Spec.Kind)
 	}
 	worker := NewWorker(s.Store, s.Catalog, s.Scanner, p, entries, inventory.Services, r.NewProject, r.DNS)
+	if r.Spec.Kind == "checks" && len(worker.knownServices(r.Spec.Hosts)) == 0 {
+		return Job{}, fmt.Errorf("нет известных сервисов: сначала запустите Поиск портов и сервисов")
+	}
 	req := JobRequest{ProjectID: p.ID, Kind: r.Spec.Kind, Label: r.Spec.Label, Targets: append([]string(nil), r.Spec.Hosts...), Scope: strings.Join(r.Spec.Hosts, ", "), Source: source, Checks: r.Spec.TemplateIDs}
 	if key != "" {
 		raw, _ := json.Marshal(r)

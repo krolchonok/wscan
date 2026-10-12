@@ -62,7 +62,7 @@ func (m Worker) Build(spec Spec) RunFunc {
 	case "checks":
 		return m.runChecks(spec.Hosts, spec.TemplateIDs)
 	case "full":
-		return m.runFull(spec.Hosts)
+		return m.runFullSpec(spec)
 	case "bulk-port":
 		return m.runServiceChecks(spec.Services, spec.TemplateIDs)
 	case "port":

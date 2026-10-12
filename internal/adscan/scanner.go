@@ -168,6 +168,10 @@ func Scan(ctx context.Context, cidr string, progress func(done, total int)) (Res
 		incrementIPv4(firstHost)
 		hostCount -= 2 // skip the network and broadcast addresses
 	}
+	return scanRange(ctx, cidr, firstHost, hostCount, progress)
+}
+
+func scanRange(ctx context.Context, cidr string, firstHost net.IP, hostCount uint64, progress func(int, int)) (Result, error) {
 	totalProbes := int(hostCount) * len(adPorts)
 
 	probes := make(chan probe)
@@ -567,7 +571,7 @@ func contains(values []int, value int) bool {
 }
 
 func compareIP(a, b string) bool {
-	return bytesCompare(net.ParseIP(a).To4(), net.ParseIP(b).To4()) < 0
+	return bytesCompare(net.ParseIP(a).To16(), net.ParseIP(b).To16()) < 0
 }
 
 func bytesCompare(a, b []byte) int {

@@ -254,9 +254,6 @@ func (m model) activityLine() string {
 }
 
 func (m model) footer() string {
-	if m.webURL != "" && (m.screen == "projects" || m.screen == "overview") {
-		return "w Web: ссылка и браузер · " + "Enter выбрать · Ctrl+C выход"
-	}
 	switch m.screen {
 	case "web-connect":
 		return "O открыть браузер · Enter TUI · Ctrl+C выход"
@@ -327,10 +324,16 @@ func (m model) footer() string {
 	case "project-delete-confirm":
 		return "Enter удалить проект · Esc отмена"
 	case "overview":
+		if m.webURL != "" {
+			return "↑↓ действие · Enter открыть · s запуск · w Web · Esc проекты"
+		}
 		return "↑↓ выбрать действие · Enter открыть · s начать проверку · 0 обзор · Esc проекты"
 	case "guided-scan":
 		return "↑↓ выбрать · Enter подтвердить шаг · Esc назад"
 	case "projects":
+		if m.webURL != "" {
+			return "↑↓ проект · Enter открыть · n создать · w Web · p настройки · q выход"
+		}
 		return "↑/↓ проект   Enter открыть   p общие настройки   n создать   Del удалить   d AD-аудит → новый проект   g задачи   q выход"
 	case "ad-scan":
 		if m.adScanRunning {

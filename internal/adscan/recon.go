@@ -34,7 +34,7 @@ func Discover(ctx context.Context, cidr string, options DNSOptions, progress fun
 		}
 	}
 	emit("Обнаружение AD/Windows-портов", 0, 0)
-	result, err := Scan(ctx, cidr, func(done, total int) { emit("Обнаружение AD/Windows-портов", done, total) })
+	result, err := ScanTargets(ctx, strings.Fields(cidr), func(done, total int) { emit("Обнаружение AD/Windows-портов", done, total) })
 	if err != nil {
 		return result, err
 	}

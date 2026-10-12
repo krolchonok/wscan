@@ -86,7 +86,7 @@ func TestGuidedOverviewAndReviewFitSmallTerminal(t *testing.T) {
 	if m.wizardStep != 2 || !strings.Contains(ansi.Strip(m.viewGuidedScan(100)), "Запустить проверку") {
 		t.Fatal("review does not have explicit start")
 	}
-	m.wizardScope = "127.0.0.1"
+	m.wizardScope = "not/a/target"
 	next, _ = m.updateGuidedScan("enter")
 	if next.(model).message == "" {
 		t.Fatal("invalid AD scope started")
@@ -117,4 +117,56 @@ func TestBrowserTerminalRunsExistingNavigation(t *testing.T) {
 	}
 	frame, _ := terminal.Frame()
 	t.Fatalf("browser TUI did not navigate: %s", ansi.Strip(frame))
+}
+
+func TestGuidedADLaunchAcceptsTwoHosts(t *testing.T) {
+	m := newTestModelForSettings(t)
+	service, err := app.NewService(m.ctx, m.store, m.cat, m.scanner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	m.shared = service
+	m.wizardStep = 2
+	m.wizardProfile = 1
+	m.wizardScope = "127.0.0.2 127.0.0.3"
+	next, _ := m.updateGuidedScan("enter")
+	got := next.(model)
+	if got.screen != "jobs" || len(service.Jobs.List()) != 1 {
+		t.Fatalf("two-host launch rejected: %s", got.message)
+	}
+	job := service.Jobs.List()[0]
+	if len(job.Targets) != 2 || job.Targets[0] != "127.0.0.2" || job.Targets[1] != "127.0.0.3" {
+		t.Fatalf("scope changed: %+v", job.Targets)
+	}
+}
+
+func TestGuidedSelectedActionAndStartRemainVisible(t *testing.T) {
+	m := newTestModelForSettings(t)
+	m.webURL = "http://127.0.0.1:8080/#token=fixture"
+	m.width, m.height = 55, 18
+	m.screen = "projects"
+	if text := ansi.Strip(m.View()); !strings.Contains(text, "n создать") {
+		t.Fatalf("create shortcut hidden: %s", text)
+	}
+	m.screen = "overview"
+	for i, label := range overviewActions {
+		m.overviewIndex = i
+		if text := ansi.Strip(m.View()); !strings.Contains(text, label) {
+			t.Fatalf("selected action %q hidden: %s", label, text)
+		}
+	}
+	m.screen = "guided-scan"
+	m.wizardStep = 2
+	m.wizardScope = "127.0.0.2 127.0.0.3"
+	for i := range guidedProfiles {
+		m.wizardProfile = i
+		if text := ansi.Strip(m.View()); !strings.Contains(text, "Запустить проверку") {
+			t.Fatalf("start hidden for profile %d: %s", i, text)
+		}
+	}
+	m.openGuidedScan()
+	if len(m.current.Targets) > 0 && m.wizardIndex != 1 {
+		t.Fatal("existing scope should default to Continue")
+	}
 }
