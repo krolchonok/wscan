@@ -300,6 +300,10 @@ func RunWithService(ctx context.Context, s *storage.Store, c *catalog.Catalog, s
 	if err := m.reload(); err != nil {
 		return err
 	}
+	if webURL != "" {
+		m.screen = "web-connect"
+		m.message = "Открываю браузер…"
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -314,7 +318,11 @@ func (m *model) reload() error {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(waitForJob(m.jobEvents), tickJobs(), m.loadCatalogCmd())
+	commands := []tea.Cmd{waitForJob(m.jobEvents), tickJobs(), m.loadCatalogCmd()}
+	if m.screen == "web-connect" && m.webURL != "" {
+		commands = append(commands, openWebBrowser(m.webURL))
+	}
+	return tea.Batch(commands...)
 }
 
 func (m model) findProject(id int64) domain.Project {

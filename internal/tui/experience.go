@@ -51,6 +51,9 @@ func (m model) actionRows() []actionRow {
 // a jobEvent message flows back in.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case webBrowserOpened:
+		m.message = webOpenMessage(x.err)
+		return m, nil
 	case coercePortChecked:
 		return m.applyCoercionPortChecked(x)
 	case coercePortReleased:
@@ -310,6 +313,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := x.String()
 		if m.screen != "service-inventory" || !m.serviceInventoryEditing {
 			key = normalizeShortcut(key)
+		}
+		if m.screen == "web-connect" {
+			return m.updateWebConnect(key)
+		}
+		if key == "w" && m.webURL != "" && (m.screen == "projects" || m.screen == "overview") {
+			m.screen = "web-connect"
+			return m, nil
 		}
 		if m.screen == "project-results" && m.resultDeleteConfirm {
 			return m.confirmResultDelete(key)

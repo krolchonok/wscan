@@ -73,6 +73,8 @@ func (m model) View() string {
 
 	var body string
 	switch m.screen {
+	case "web-connect":
+		body = m.viewWebConnect(w)
 	case "ssh-password-lists":
 		body = m.viewSSHPasswordLists(w)
 	case "ssh-dictionary":
@@ -252,7 +254,12 @@ func (m model) activityLine() string {
 }
 
 func (m model) footer() string {
+	if m.webURL != "" && (m.screen == "projects" || m.screen == "overview") {
+		return "w Web: ссылка и браузер · " + "Enter выбрать · Ctrl+C выход"
+	}
 	switch m.screen {
+	case "web-connect":
+		return "O открыть браузер · Enter TUI · Ctrl+C выход"
 	case "coerce-setup":
 		if m.adAccessJobRunning() {
 			return "Esc остановить проверку · g задачи"
