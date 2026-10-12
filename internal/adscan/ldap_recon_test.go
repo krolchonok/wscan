@@ -56,7 +56,7 @@ func TestRootDSEKeepsDomainWhenAnonymousUsersAreDenied(t *testing.T) {
 						entry := ber.Encode(ber.ClassApplication, ber.TypeConstructed, 4, nil, "")
 						entry.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", ""))
 						attrs := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "")
-						for _, attr := range [][2]string{{"defaultNamingContext", "DC=lab,DC=example"}, {"dnsHostName", "dc.lab.example"}} {
+						for _, attr := range [][2]string{{"defaultNamingContext", "DC=lab,DC=example"}, {"dnsHostName", "dc.lab.example"}, {"supportedCapabilities", "1.2.840.113556.1.4.800"}} {
 							pair := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "")
 							pair.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, attr[0], ""))
 							values := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSet, nil, "")
@@ -90,7 +90,7 @@ func TestRootDSEKeepsDomainWhenAnonymousUsersAreDenied(t *testing.T) {
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
-			if info.Domain != "lab.example" || info.HostName != "dc.lab.example" || len(info.Users) != 0 || !strings.Contains(info.Message, "Insufficient Access Rights") {
+			if !info.DCConfirmed || len(info.Identity) != 3 || info.Domain != "lab.example" || info.HostName != "dc.lab.example" || len(info.Users) != 0 || !strings.Contains(info.Message, "Insufficient Access Rights") {
 				t.Fatalf("lost RootDSE or LDAP denial: %+v", info)
 			}
 		})

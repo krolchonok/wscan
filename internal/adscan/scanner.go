@@ -5,7 +5,6 @@ package adscan
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -45,6 +44,9 @@ type Host struct {
 	ADCSPaths                 []ADCSPath
 	HostName                  string
 	Domain                    string
+	DCConfirmed               bool
+	DCDNSAdvertised           bool
+	Identity                  []IdentityFact
 	LDAPMessage               string
 	LDAPUsers                 []string
 	ASREPUsers                []string
@@ -73,17 +75,19 @@ type Result struct {
 	HostsScanned int
 	Hosts        []Host
 	DNSRecords   []SRVRecord
+	Diagnostics  []string
 }
 
 // SRVRecord is an AD-related DNS service record returned by a discovered DNS server.
 type SRVRecord struct {
-	Server   string
-	Domain   string
-	Query    string
-	Target   string
-	Port     uint16
-	Priority uint16
-	Weight   uint16
+	Server     string
+	ServerPort uint16
+	Domain     string
+	Query      string
+	Target     string
+	Port       uint16
+	Priority   uint16
+	Weight     uint16
 }
 
 // LocalNetworks returns active interfaces on private IPv4 ranges.
@@ -260,6 +264,8 @@ func Scan(ctx context.Context, cidr string, progress func(done, total int)) (Res
 				info := rootDSE(ctx, address, port)
 				controllers[index].HostName = info.HostName
 				controllers[index].Domain = info.Domain
+				controllers[index].DCConfirmed = info.DCConfirmed
+				controllers[index].Identity = info.Identity
 				controllers[index].LDAPMessage = info.Message
 				controllers[index].LDAPUsers = info.Users
 				controllers[index].ASREPUsers = info.ASREPUsers
@@ -288,8 +294,10 @@ func Scan(ctx context.Context, cidr string, progress func(done, total int)) (Res
 
 func classifyRoles(host Host) []string {
 	var roles []string
-	if host.Domain != "" || host.HostName != "" || (contains(host.Ports, 88) && (contains(host.Ports, 389) || contains(host.Ports, 636))) {
+	if host.DCConfirmed {
 		roles = append(roles, "Контроллер домена")
+	} else if host.DCDNSAdvertised || (contains(host.Ports, 88) && ldapPort(host.Ports) != 0) {
+		roles = append(roles, "Предполагаемый контроллер домена")
 	}
 	if contains(host.Ports, 3268) || contains(host.Ports, 3269) {
 		roles = append(roles, "Global Catalog")
@@ -373,134 +381,6 @@ func EstimateDuration(cidr string) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// LookupADSRV queries only DNS servers discovered in the scanned subnet. It
-// gathers common LDAP, Kerberos, password-change, and Global Catalog SRV records.
-func LookupADSRV(ctx context.Context, hosts []Host) ([]SRVRecord, []string, error) {
-	servers := make([]string, 0)
-	serverSeen := map[string]bool{}
-	domains := make([]string, 0)
-	domainSeen := map[string]bool{}
-	for _, host := range hosts {
-		if contains(host.Ports, 53) && !serverSeen[host.Address] {
-			serverSeen[host.Address] = true
-			servers = append(servers, host.Address)
-		}
-		if domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host.Domain)), "."); domain != "" && !domainSeen[domain] {
-			domainSeen[domain] = true
-			domains = append(domains, domain)
-		}
-	}
-	if len(servers) == 0 || len(domains) == 0 {
-		return nil, nil, nil
-	}
-	sort.Strings(servers)
-	sort.Strings(domains)
-	servers = servers[:min(len(servers), 4)]
-	domains = domains[:min(len(domains), 4)]
-	queries := []struct {
-		service, proto, name string
-	}{
-		{"ldap", "tcp", "dc._msdcs."},
-		{"ldap", "tcp", ""},
-		{"kerberos", "tcp", ""},
-		{"kerberos", "udp", ""},
-		{"kpasswd", "tcp", ""},
-		{"gc", "tcp", ""},
-	}
-	type job struct {
-		server, domain string
-		query          struct{ service, proto, name string }
-	}
-	jobs := make(chan job)
-	var mu sync.Mutex
-	var records []SRVRecord
-	var failures []string
-	var wg sync.WaitGroup
-	workers := min(8, len(servers)*len(domains)*len(queries))
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				serverAddr := net.JoinHostPort(item.server, "53")
-				resolver := &net.Resolver{PreferGo: true, Dial: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-					if network != "tcp" {
-						network = "udp"
-					}
-					return (&net.Dialer{Timeout: 1500 * time.Millisecond}).DialContext(dialCtx, network, serverAddr)
-				}}
-				queryName := item.query.name + item.domain
-				queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-				_, answers, err := resolver.LookupSRV(queryCtx, item.query.service, item.query.proto, queryName)
-				cancel()
-				mu.Lock()
-				if err != nil {
-					var dnsErr *net.DNSError
-					if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
-						failures = append(failures, serverAddr+" "+queryName+": "+err.Error())
-					}
-					mu.Unlock()
-					continue
-				}
-				qname := "_" + item.query.service + "._" + item.query.proto + "." + queryName
-				for _, answer := range answers[:min(len(answers), 64)] {
-					records = append(records, SRVRecord{
-						Server: item.server, Domain: item.domain, Query: qname,
-						Target: strings.TrimSuffix(strings.ToLower(answer.Target), "."),
-						Port:   answer.Port, Priority: answer.Priority, Weight: answer.Weight,
-					})
-				}
-				mu.Unlock()
-			}
-		}()
-	}
-feed:
-	for _, server := range servers {
-		for _, domain := range domains {
-			for _, query := range queries {
-				select {
-				case <-ctx.Done():
-					break feed
-				case jobs <- job{server: server, domain: domain, query: query}:
-				}
-			}
-		}
-	}
-	close(jobs)
-	wg.Wait()
-	if err := ctx.Err(); err != nil {
-		return nil, failures, err
-	}
-	seen := map[string]bool{}
-	unique := records[:0]
-	for _, record := range records {
-		key := fmt.Sprintf("%s|%s|%s|%s|%d|%d|%d", record.Server, record.Domain, record.Query, record.Target, record.Port, record.Priority, record.Weight)
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, record)
-		}
-	}
-	sort.Slice(unique, func(i, j int) bool {
-		if unique[i].Server != unique[j].Server {
-			return unique[i].Server < unique[j].Server
-		}
-		if unique[i].Query != unique[j].Query {
-			return unique[i].Query < unique[j].Query
-		}
-		if unique[i].Priority != unique[j].Priority {
-			return unique[i].Priority < unique[j].Priority
-		}
-		if unique[i].Target != unique[j].Target {
-			return unique[i].Target < unique[j].Target
-		}
-		return unique[i].Port < unique[j].Port
-	})
-	return unique, failures, nil
-}
-
 func incrementIPv4(ip net.IP) {
 	for i := len(ip) - 1; i >= 0; i-- {
 		ip[i]++
@@ -511,6 +391,8 @@ func incrementIPv4(ip net.IP) {
 }
 
 type rootDSEInfo struct {
+	DCConfirmed               bool
+	Identity                  []IdentityFact
 	HostName                  string
 	Domain                    string
 	Message                   string
@@ -556,7 +438,7 @@ func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootD
 		conn.SetTimeout(time.Until(deadline))
 	}
 	request := ldap.NewSearchRequest("", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, int(ldapQueryLimit.Seconds()), false,
-		"(objectClass=*)", []string{"defaultNamingContext", "rootDomainNamingContext", "dnsHostName"}, nil)
+		"(objectClass=*)", []string{"defaultNamingContext", "rootDomainNamingContext", "dnsHostName", "supportedCapabilities"}, nil)
 	response, err := conn.Search(request)
 	if err != nil {
 		info.Message = "RootDSE: запрос завершился ошибкой: " + err.Error()
@@ -573,6 +455,17 @@ func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootD
 		dn = entry.GetAttributeValue("rootDomainNamingContext")
 	}
 	info.Domain = domainFromDN(dn)
+	capabilities := entry.GetAttributeValues("supportedCapabilities")
+	info.DCConfirmed = info.Domain != "" && info.HostName != "" && hasADDSCapability(capabilities)
+	if info.HostName != "" {
+		info.Identity = append(info.Identity, IdentityFact{Kind: "hostname", Value: info.HostName, Source: "LDAP RootDSE dnsHostName"})
+	}
+	if info.Domain != "" {
+		info.Identity = append(info.Identity, IdentityFact{Kind: "domain", Value: info.Domain, Source: "LDAP RootDSE namingContext"})
+	}
+	if info.DCConfirmed {
+		info.Identity = append(info.Identity, IdentityFact{Kind: "role", Value: "Контроллер домена", Source: "LDAP RootDSE supportedCapabilities: 1.2.840.113556.1.4.800; AD LDS отсутствует"})
+	}
 	if info.Domain == "" {
 		info.Message = "LDAP открыт; домен не раскрыт"
 	} else {
