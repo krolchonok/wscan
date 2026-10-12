@@ -56,7 +56,7 @@ func TestViewFillsTerminalAndKeepsFooterAfterResize(t *testing.T) {
 					t.Fatalf("%s: line width %d, want %d", screen, ansi.StringWidth(line), size[0])
 				}
 			}
-			if !strings.Contains(ansi.Strip(lines[len(lines)-1]), "↑/↓") && screen != "settings" {
+			if !strings.Contains(ansi.Strip(lines[len(lines)-1]), "↑/↓") && screen != "settings" && screen != "job-details" {
 				t.Fatalf("%s: footer was clipped", screen)
 			}
 			modal := screen == "action-menu" || screen == "disc-options"

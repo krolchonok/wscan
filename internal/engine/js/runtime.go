@@ -444,6 +444,8 @@ func module(vm *goja.Runtime, ctx context.Context, timeout time.Duration, librar
 		return nil, err
 	}
 	switch strings.TrimPrefix(name, "./") {
+	case "wscan/mailaudit":
+		return mailAuditModule(vm, ctx, timeout), nil
 	case "nuclei/net":
 		return netModule(vm, ctx, timeout), nil
 	case "nuclei/bytes":

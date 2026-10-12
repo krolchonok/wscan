@@ -70,3 +70,37 @@ func TestSMBTableKeepsLongShareNamesAndParsesBracketsInNames(t *testing.T) {
 		t.Fatalf("table lost share name or permissions: %s", table)
 	}
 }
+
+func TestDefaultSMBLoginOverviewShowsCredentialsWithoutSharePermissions(t *testing.T) {
+	for _, response := range []string{`["ADMIN$","IPC$"]`, `[{"Name":"public","Read":true,"Write":false}]`, `true`} {
+		f := domain.Finding{TemplateID: "smb-default-login", Name: "SMB - Default Logins", Severity: "high", Response: response, Evidence: `dsl matched: success == true; json: ` + response + `; user="administrator" pass="password"`}
+		m := model{findingDetail: &f}
+		view := strings.Join(m.projectResultDetailLines(100), "\n")
+		for _, want := range []string{`Пользователь: "administrator"`, `Пароль: "password"`} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("overview lost credentials for %s: %s", response, view)
+			}
+		}
+	}
+}
+
+func TestCredentialSummaryKeepsEmptyAndEscapedValues(t *testing.T) {
+	for _, tc := range []struct{ evidence, want string }{
+		{`user="" pass=""`, "Вход: без имени и пароля"},
+		{`user="guest" pass=""`, "Пароль: (пустой)"},
+		{`user="DOMAIN\\admin" pass="p\"ass"`, `Пользователь: "DOMAIN\\admin"`},
+	} {
+		if got := findingCredentialSummary(domain.Finding{Evidence: tc.evidence}); !strings.Contains(got, tc.want) {
+			t.Fatalf("summary %q missing %q", got, tc.want)
+		}
+	}
+}
+
+func TestOldDefaultLoginDoesNotInventCredentials(t *testing.T) {
+	f := domain.Finding{TemplateID: "smb-default-login", Name: "SMB - Default Logins", Evidence: `dsl matched: success == true`, Response: `["IPC$"]`}
+	m := model{findingDetail: &f}
+	text := strings.Join(m.projectResultDetailLines(100), "\n")
+	if !strings.Contains(text, "Учётные данные не сохранены") || strings.Contains(text, "Пользователь:") {
+		t.Fatalf("old result guessed credentials: %s", text)
+	}
+}

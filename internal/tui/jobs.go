@@ -140,7 +140,7 @@ func (j *job) statusLabel() string {
 	case statusCancelled:
 		return "отменено"
 	default:
-		return "готово"
+		return "завершено"
 	}
 }
 
@@ -254,23 +254,28 @@ func (m *model) applyJobEvent(ev jobEvent) {
 		}
 	}
 	if j.kind == jobAD && ev.projectID != 0 {
+		existingProject := j.projectID != 0 && j.projectID == ev.projectID
 		j.projectID = ev.projectID
 		j.label = ev.projectName
 		if err := m.reload(); err != nil {
-			j.addLog("Проект создан, но список проектов не обновлён: " + err.Error())
+			j.addLog("Результаты AD записаны, но список проектов не обновлён: " + err.Error())
 		}
 		project := m.findProject(ev.projectID)
 		if project.ID == 0 {
 			project = domain.Project{ID: ev.projectID, Name: ev.projectName}
 		}
 		m.openProject(project)
-		j.addLog(fmt.Sprintf("Создан проект %q (ID %d)", ev.projectName, ev.projectID))
+		if existingProject {
+			j.addLog(fmt.Sprintf("Дополнен проект %q (ID %d)", ev.projectName, ev.projectID))
+		} else {
+			j.addLog(fmt.Sprintf("Создан проект %q (ID %d)", ev.projectName, ev.projectID))
+		}
 	}
 	res := ev.result
 	j.result = &res
 	j.adResult = ev.adResult
 	j.runID = res.RunID
-	j.findings = len(res.Findings)
+	j.findings = len(groupedProjectResults(orderedResults(res.Findings)))
 	for _, message := range res.Skipped {
 		j.addLog("Пропущено: " + message)
 	}
@@ -289,7 +294,7 @@ func (m *model) applyJobEvent(ev jobEvent) {
 		j.addLog(j.stage + ": " + j.errText)
 		if j.kind == jobAD && j.id == m.adScanJobID {
 			if ev.projectID != 0 {
-				m.message = "Проект создан, но запись результатов завершилась ошибкой: " + ev.err.Error()
+				m.message = "Запись AD-результатов в проект завершилась ошибкой: " + ev.err.Error()
 			} else {
 				m.message = "AD-сканирование не завершено: " + ev.err.Error()
 			}
@@ -309,7 +314,7 @@ func (m *model) applyJobEvent(ev jobEvent) {
 	} else {
 		j.addLog(fmt.Sprintf("Завершено: запуск #%d, сервисов %d, результатов %d, ошибок проверок %d", j.runID, len(res.Services), j.findings, len(res.Errors)))
 	}
-	j.addLog(resultCounts(res.Findings, len(res.Errors)))
+	j.addLog(resultCounts(groupedProjectResults(orderedResults(res.Findings)), len(res.Errors)))
 	if res.HTTPRequestsSaved > 0 {
 		j.addLog(fmt.Sprintf("HTTP: сэкономлено повторных запросов — %d", res.HTTPRequestsSaved))
 	}

@@ -15,12 +15,10 @@ cp "$ROOT/docs/TRANSFER.md" "$BUNDLE/README-TRANSFER.md"
 cp "$ROOT/docs/KNOWN_TEST_FAILURES.md" "$BUNDLE/KNOWN_TEST_FAILURES.md"
 cp "$ROOT/docs/ENGINE_POLICY_AUDIT.md" "$BUNDLE/ENGINE_POLICY_AUDIT.md"
 cp "$ROOT/docs/SUPPORTED.md" "$BUNDLE/SUPPORTED.md"
-cat > "$BUNDLE/start.sh" <<'EOF'
-#!/bin/sh
-set -eu
-cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec ./wscan "$@"
-EOF
+cp "$ROOT/docs/COERCION.md" "$BUNDLE/COERCION.md"
+cp "$ROOT/docs/RESULTS.md" "$BUNDLE/RESULTS.md"
+cp "$ROOT/docs/GUI_REFACTOR.md" "$BUNDLE/GUI_REFACTOR.md"
+cp "$ROOT/start.sh" "$BUNDLE/start.sh"
 chmod 755 "$BUNDLE/start.sh" "$BUNDLE/wscan"
 ARCHIVE="wscan-$VERSION-linux-amd64.tar.gz"
 tar -C "$STAGE" -czf "$OUT_DIR/$ARCHIVE" wscan-linux-amd64

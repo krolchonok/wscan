@@ -51,6 +51,19 @@ func (m model) actionRows() []actionRow {
 // a jobEvent message flows back in.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case coercePortChecked:
+		return m.applyCoercionPortChecked(x)
+	case coercePortReleased:
+		return m.applyCoercionPortReleased(x)
+	case coercePortRestored:
+		if x.err != nil {
+			m.message = "Восстановление Samba: " + x.err.Error()
+		}
+		return m, nil
+	case resultDeleted:
+		return m.applyResultDeleted(x)
+	case coerceRouteReady:
+		return m.applyCoerceRoute(x)
 	case sshDictionaryProgress:
 		return m.applySSHDictionaryProgress(x)
 	case sshDictionaryDone:
@@ -297,23 +310,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen != "service-inventory" || !m.serviceInventoryEditing {
 			key = normalizeShortcut(key)
 		}
-		if m.current.ID > 0 && (m.screen == "desk" || m.screen == "networks" || m.screen == "jobs" || m.screen == "interaction-menu") {
-			switch key {
-			case "1":
-				m.screen, m.message = "networks", ""
-				return m, nil
-			case "2":
-				m.openHostScope("")
-				m.message = ""
-				return m, nil
-			case "4":
-				m.openProjectInteractions()
-				return m, nil
-			case "3":
-				m.jobsReturn, m.screen = m.screen, "jobs"
-				return m, nil
-			}
+		if m.screen == "project-results" && m.resultDeleteConfirm {
+			return m.confirmResultDelete(key)
 		}
+		if next, ok := m.navigateWorkspace(key); ok {
+			return next, nil
+		}
+
 		if key == "g" && m.screen != "jobs" && !(m.screen == "service-inventory" && m.serviceInventoryEditing) {
 			m.jobsReturn = m.screen
 			m.jobIndex = 0
@@ -345,14 +348,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = m.helpReturn
 			} else {
 				m.helpReturn, m.screen = m.screen, "help"
+				m.helpOffset = 0
 			}
 			return m, nil
 		}
 		if m.screen == "help" {
-			if key == "esc" || key == "enter" || key == "q" {
-				m.screen = m.helpReturn
-			}
-			return m, nil
+			return m.updateHelp(key)
 		}
 
 		switch m.screen {
@@ -402,6 +403,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjects(key)
 		case "ad-scan":
 			return m.updateADScan(key)
+		case "coerce-port-check", "coerce-port-confirm", "coerce-port-stopping":
+			return m.updateCoercionPort(key)
+		case "coerce-setup":
+			return m.updateCoercionSetup(key)
+		case "ad-access":
+			return m.updateADAccess(key)
 		case "host-port-selection":
 			return m.updateHostPortSelection(key)
 		case "host-selection":
@@ -420,6 +427,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateJobs(key)
 		case "job-details":
 			return m.updateJobDetails(key)
+		case "project-results":
+			return m.updateProjectResults(key)
 		case "finding-details":
 			return m.updateFindingDetails(key)
 		case "scan-review":
@@ -513,6 +522,7 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 	}
 	if key == "v" {
 		m.serviceInventoryIndex = 0
+		m.serviceInventoryProject = false
 		m.serviceInventoryEditing = false
 		m.serviceInventorySelected = nil
 		m.screen = "service-inventory"
@@ -948,7 +958,7 @@ func (m *model) openDiscOptions() {
 	m.discProject = m.current
 	m.discOnlyKnown = false
 	m.discHosts = append([]string(nil), m.actionHosts...)
-	m.discOptIndex = 0
+	m.discOptIndex = 9
 	m.discSetIndex = 3
 	m.discTCP = true
 	m.discUDP = false
@@ -1078,6 +1088,7 @@ func (m model) updateJobs(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.jobIndex < len(rows) {
 			m.logOffset = -1
+			m.jobDetailRaw = false
 			m.screen = "job-details"
 		}
 	case "e":
@@ -1332,6 +1343,7 @@ func (m model) updateCatalog(key string) (tea.Model, tea.Cmd) {
 // --- history ---------------------------------------------------------
 
 func (m model) updateHistory(key string) (tea.Model, tea.Cmd) {
+	m.historyIndex = min(max(0, m.historyIndex), max(0, len(m.history)-1))
 	switch key {
 	case "esc", "q":
 		m.screen = "desk"
@@ -1344,16 +1356,8 @@ func (m model) updateHistory(key string) (tea.Model, tea.Cmd) {
 			m.historyIndex++
 		}
 	case "enter":
-		if len(m.history) > 0 {
-			run := m.history[m.historyIndex]
-			hosts := uniqueStrings(serviceBuckets(run.Services))
-			if len(hosts) == 1 {
-				m.selectHost(hosts[0])
-			} else {
-				m.hostIndex = -1
-			}
-			m.focusCol = 0
-			m.screen = "desk"
+		if m.historyIndex >= 0 && m.historyIndex < len(m.history) {
+			m.openRunResults(m.history[m.historyIndex].ID)
 		}
 	case "e":
 		if len(m.history) > 0 {

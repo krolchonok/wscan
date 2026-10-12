@@ -84,8 +84,8 @@ func TestScanFromPortDetailsStaysOnPortAndWritesLog(t *testing.T) {
 	}
 	next, _ = m.updateJobDetails("enter")
 	m = next.(model)
-	if m.screen != "desk" || m.focusCol != 1 || m.servicesFor(m.currentHost())[m.serviceIndex].Port != selected.Listener.Addr().(*net.TCPAddr).Port {
-		t.Fatal("result did not return to selected port")
+	if m.screen != "project-results" || m.resultsScope.runID != j.runID || m.focusCol != 1 || m.servicesFor(m.currentHost())[m.serviceIndex].Port != selected.Listener.Addr().(*net.TCPAddr).Port {
+		t.Fatal("result did not open saved run or preserve selected port")
 	}
 }
 

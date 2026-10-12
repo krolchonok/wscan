@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"wscan/internal/domain"
 )
 
 func (m model) deskFindings() []domain.Finding {
+	if m.screen == "project-results" {
+		return m.filteredProjectFindings()
+	}
 	host := m.currentHost()
 	services := m.servicesFor(host)
 	if m.serviceIndex >= 0 && m.serviceIndex < len(services) {
@@ -25,9 +27,23 @@ func (m *model) openFinding() bool {
 	if !m.selectFinding(m.findingIndex) {
 		return false
 	}
-	m.findingRaw = false
-	m.findingPane = 0
-	m.screen = "finding-details"
+	selected := *m.findingDetail
+	scope := resultScope{host: m.currentHost()}
+	if services := m.servicesFor(scope.host); m.serviceIndex >= 0 && m.serviceIndex < len(services) {
+		service := services[m.serviceIndex]
+		scope.service = &service
+	}
+	m.openScopedResults(scope)
+	m.projectResultsFilter = "all"
+	for i, f := range m.filteredProjectFindings() {
+		if resultSelectionKey(f) == resultSelectionKey(selected) {
+			m.selectFinding(i)
+			break
+		}
+	}
+	m.findingPane = 1
+	m.findingDetailFocus = false
+	m.findingDirectReturn = true
 	return true
 }
 
@@ -46,6 +62,7 @@ func (m *model) selectFinding(index int) bool {
 	m.findingClassified = ""
 	m.enrichFinding()
 	m.findingOffset = 0
+	m.findingSection = 0
 	return true
 }
 
@@ -215,84 +232,15 @@ func prettyJSON(value string) (string, bool) {
 	return out.String(), true
 }
 
-func (m model) findingRows() int { return max(1, m.bodyHeight()-4) }
-
-func findingPanelWidths(width int) (int, int) {
-	available := max(2, width-8)
-	left := min(52, max(20, available*42/100))
-	left = min(left, max(1, available/2))
-	return left, max(1, available-left)
-}
-
 func (m model) updateFindingDetails(key string) (tea.Model, tea.Cmd) {
-	rows := m.findingRows()
-	_, rightWidth := findingPanelWidths(m.width)
-	last := max(0, len(m.findingLines(rightWidth))-rows)
-	switch key {
-	case "left":
-		m.findingPane = 0
-	case "right", "enter":
-		m.findingPane = 1
-	case "tab", "shift+tab":
-		m.findingPane = 1 - m.findingPane
-	case "r":
-		m.findingRaw = !m.findingRaw
-		m.findingOffset = 0
-	case "esc", "q":
-		m.screen = "desk"
-	case "up", "k":
-		if m.findingPane == 0 {
-			m.selectFinding(m.findingIndex - 1)
-		} else {
-			m.findingOffset = max(0, m.findingOffset-1)
-		}
-	case "down", "j":
-		if m.findingPane == 0 {
-			m.selectFinding(m.findingIndex + 1)
-		} else {
-			m.findingOffset = min(last, m.findingOffset+1)
-		}
-	case "pgup":
-		m.findingOffset = max(0, m.findingOffset-rows)
-	case "pgdown":
-		m.findingOffset = min(last, m.findingOffset+rows)
-	case "home":
-		if m.findingPane == 0 {
-			m.selectFinding(0)
-		} else {
-			m.findingOffset = 0
-		}
-	case "end":
-		if m.findingPane == 0 {
-			m.selectFinding(len(m.deskFindings()) - 1)
-		} else {
-			m.findingOffset = last
-		}
+	// Compatibility for screens opened by older modules; all navigation and
+	// deletion now belong to the same result screen.
+	if m.screen == "finding-details" {
+		m.screen = "project-results"
+		m.resultsScope = resultScope{host: m.currentHost()}
+		m.projectResultsReturn = "desk"
 	}
-	return m, nil
+	return m.updateProjectResults(key)
 }
 
-func (m model) viewFindingDetails(w int) string {
-	leftWidth, rightWidth := findingPanelWidths(w)
-	height := max(1, m.bodyHeight()-2)
-	findings := m.deskFindings()
-	var list strings.Builder
-	list.WriteString(headingStyle.Render(fmt.Sprintf("РЕЗУЛЬТАТЫ %d/%d", min(m.findingIndex+1, len(findings)), len(findings))) + "\n")
-	list.WriteString(mutedStyle.Render("↑/↓ — выбрать · → — текст") + "\n\n")
-	visible := max(1, height-5)
-	lo, hi := windowRange(m.findingIndex, len(findings), visible)
-	list.WriteString(moreLine(lo, true))
-	for i := lo; i < hi; i++ {
-		f := findings[i]
-		list.WriteString(renderFindingRow(f, i == m.findingIndex, leftWidth))
-	}
-	list.WriteString(moreLine(len(findings)-hi, false))
-	lines := m.findingLines(rightWidth)
-	rows := m.findingRows()
-	offset := min(m.findingOffset, max(0, len(lines)-rows))
-	end := min(len(lines), offset+rows)
-	body := headingStyle.Render("ПОДРОБНОСТИ") + fmt.Sprintf(" · %d–%d/%d\n", offset+1, end, len(lines)) + mutedStyle.Render("PgUp/PgDn — прокрутка · r — технические данные") + "\n" + strings.Join(lines[offset:end], "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		colBoxStyle(leftWidth, height, m.findingPane == 0).Render(list.String()),
-		colBoxStyle(rightWidth, height, m.findingPane == 1).Render(body))
-}
+func (m model) viewFindingDetails(w int) string { return m.viewProjectResults(w) }

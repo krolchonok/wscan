@@ -196,7 +196,7 @@ func (m *model) mergeResult(res engine.Result, targets []string) {
 	m.absorb(res.Services, res.Findings, targets, res.RunID)
 	m.rebuildHostOrder()
 	m.history, _ = m.store.Runs(m.ctx, m.current.ID)
-	if m.screen == "finding-details" && m.findingDetail != nil {
+	if (m.screen == "finding-details" || m.screen == "project-results") && m.findingDetail != nil {
 		index := m.findingIndex
 		for i, f := range m.deskFindings() {
 			if f.TemplateID == m.findingDetail.TemplateID && f.MatchedAt == m.findingDetail.MatchedAt && f.MatcherName == m.findingDetail.MatcherName {
@@ -204,7 +204,13 @@ func (m *model) mergeResult(res engine.Result, targets []string) {
 				break
 			}
 		}
-		m.selectFinding(index)
+		if !m.selectFinding(index) {
+			m.findingDetail = nil
+			m.findingIndex = 0
+			m.findingOffset = 0
+		}
+	} else if m.screen == "project-results" {
+		m.refreshProjectResultSelection()
 	}
 }
 
@@ -374,18 +380,30 @@ func (m model) servicesFor(host string) []domain.Service {
 
 func (m model) findingsFor(host string) []domain.Finding {
 	if hi, ok := m.inventory[host]; ok {
-		return orderedResults(hi.findings)
+		return groupedProjectResults(orderedResults(hi.findings))
 	}
 	return nil
 }
 
 func (m model) findingsForService(host string, s domain.Service) []domain.Finding {
+	return groupedProjectResults(orderedResults(m.rawFindingsForService(host, s)))
+}
+
+func (m model) rawFindingsForService(host string, s domain.Service) []domain.Finding {
 	allowed := map[string]bool{strings.ToLower(s.Host): true, strings.ToLower(host): true}
 	if target, err := discovery.TargetHost(s.Target); err == nil {
 		allowed[strings.ToLower(target)] = true
 	}
 	var out []domain.Finding
-	for _, f := range m.findingsFor(host) {
+	var findings []domain.Finding
+	if h := m.inventory[host]; h != nil {
+		findings = h.findings
+	}
+	for _, f := range findings {
+		if coercionResult(f) && s.Port == 445 && s.Protocol != "udp" && allowed[strings.ToLower(f.Target)] {
+			out = append(out, f)
+			continue
+		}
 		for _, address := range []string{f.MatchedAt, f.Target} {
 			name, port, scheme, ok := findingEndpoint(address)
 			if !ok {

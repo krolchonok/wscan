@@ -24,6 +24,10 @@ func Direction(e Entry) string {
 	if IsUnsupported(e) {
 		return UnsupportedGroup
 	}
+	// Older library indexes grouped IRC under miscellaneous services.
+	if (e.Service == "" || e.Service == "Прочие сервисы") && strings.HasPrefix(filepath.Base(e.Path), "irc-") {
+		return "IRC"
+	}
 	if e.Service != "" {
 		return e.Service
 	}
@@ -69,6 +73,7 @@ func serviceDirection(name string) string {
 		{"WinRM", []string{"winrm", "wsman", "wsmans"}},
 		{"SMB", []string{"smb", "smb2", "samba", "cifs"}},
 		{"SSH", []string{"ssh", "ssh2"}},
+		{"IRC", []string{"irc", "ircs", "ircd", "unrealircd", "inspircd"}},
 		{"FTP", []string{"ftp", "tftp"}},
 		{"RDP", []string{"rdp"}},
 		{"DNS", []string{"dns", "dnssec"}},
@@ -185,6 +190,8 @@ func ServiceDirection(s domain.Service) string {
 		return "RDP"
 	case 53:
 		return "DNS"
+	case 194, 529, 994, 6664, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 7000, 8067:
+		return "IRC"
 	case 25, 110, 143, 465, 587, 993, 995:
 		return "Почта"
 	}

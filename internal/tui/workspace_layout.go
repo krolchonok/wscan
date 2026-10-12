@@ -211,28 +211,20 @@ func (m model) navigationLine() string {
 	if m.current.ID == 0 || m.screen == "projects" {
 		return mutedStyle.Render("Проекты · Enter открыть · n создать")
 	}
-	if m.screen != "desk" && m.screen != "networks" && m.screen != "jobs" && m.screen != "interaction-menu" {
-		label := map[string]string{
-			"interaction-menu": "Взаимодействие", "smb-browser": "SMB-проводник",
-			"action-menu": "Действия", "disc-options": "Параметры сканирования",
-			"input": "Добавление / изменение", "delete-confirm": "Удаление",
-			"catalog": "Проверки", "catalog-groups": "Библиотека проверок",
-			"settings": "Настройки проекта", "credentials": "Учётные записи",
-			"history": "История запусков", "finding-details": "Результат проверки",
-			"job-details": "Подробности задачи", "help": "Клавиши",
-		}[m.screen]
-		if label == "" {
-			label = "Параметры действия"
+	if !m.workspaceNavigationAllowed() {
+		title := screenTitle(m.screen)
+		if m.resultDeleteConfirm && m.screen == "project-results" {
+			title = "Удаление результатов"
 		}
-		return headingStyle.Render(label) + mutedStyle.Render(" · Esc назад")
+		return headingStyle.Render(title) + mutedStyle.Render(" · Esc назад")
 	}
-	items := []struct{ label, screen string }{{"1 Подсети", "networks"}, {"2 Хосты", "desk"}, {"3 Задачи", "jobs"}, {"4 Взаимодействие", "interaction-menu"}}
 	var parts []string
-	for _, item := range items {
-		if m.screen == item.screen {
-			parts = append(parts, headingStyle.Render("["+item.label+"]"))
+	for _, item := range workspaceTabs {
+		label := item.key + " " + item.label
+		if workspaceSection(m.screen) == item.screen {
+			parts = append(parts, headingStyle.Render("["+label+"]"))
 		} else {
-			parts = append(parts, mutedStyle.Render(item.label))
+			parts = append(parts, mutedStyle.Render(label))
 		}
 	}
 	if m.width >= 100 && m.screen == "desk" {
@@ -243,6 +235,15 @@ func (m model) navigationLine() string {
 
 func (m model) contextLine() string {
 	switch m.screen {
+	case "project-results", "finding-details":
+		return mutedStyle.Render(m.resultsScopeLabel())
+	case "history":
+		return mutedStyle.Render("Enter — только выбранный запуск · 5 — результаты всего проекта")
+	case "job-details":
+		if m.jobDetailRaw {
+			return mutedStyle.Render("Технический журнал · r вернуться к итогу")
+		}
+		return mutedStyle.Render("Итог задачи · Enter результаты · r журнал")
 	case "networks":
 		return mutedStyle.Render(fmt.Sprintf("Подсети проекта: %d · отмечено: %d", len(m.networkTargets()), len(m.selectedNetworks)))
 	case "desk":

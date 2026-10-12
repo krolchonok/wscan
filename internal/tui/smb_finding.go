@@ -62,16 +62,8 @@ func smbFindingTable(f domain.Finding, width int) (string, bool) {
 		return "", false
 	}
 	var body strings.Builder
-	if match := smbFindingCredentialRE.FindStringSubmatch(f.Evidence); len(match) == 3 {
-		user, userErr := strconv.Unquote(match[1])
-		password, passErr := strconv.Unquote(match[2])
-		if userErr == nil && passErr == nil {
-			if user == "" && password == "" {
-				body.WriteString("Вход: без имени и пароля\n\n")
-			} else {
-				body.WriteString("Пользователь: " + smbCredentialValue(user) + "\nПароль: " + smbCredentialValue(password) + "\n\n")
-			}
-		}
+	if credentials := findingCredentialSummary(f); credentials != "" {
+		body.WriteString(credentials + "\n\n")
 	}
 	nameWidth := 4
 	for _, share := range shares {
@@ -117,4 +109,22 @@ func smbCredentialValue(value string) string {
 		return fmt.Sprintf("%d пробел(а)", len([]rune(value)))
 	}
 	return smbDisplayName(strconv.Quote(value))
+}
+
+// Credential evidence is independent of whether a script returns structured
+// share permissions, share names, or a boolean authentication result.
+func findingCredentialSummary(f domain.Finding) string {
+	match := smbFindingCredentialRE.FindStringSubmatch(f.Evidence)
+	if len(match) != 3 {
+		return ""
+	}
+	user, userErr := strconv.Unquote(match[1])
+	password, passErr := strconv.Unquote(match[2])
+	if userErr != nil || passErr != nil {
+		return ""
+	}
+	if user == "" && password == "" {
+		return "Вход: без имени и пароля"
+	}
+	return "Пользователь: " + smbCredentialValue(user) + "\nПароль: " + smbCredentialValue(password)
 }

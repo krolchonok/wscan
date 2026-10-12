@@ -123,6 +123,12 @@ func (m model) View() string {
 		body = m.viewProjects(w)
 	case "ad-scan":
 		body = m.viewADScan(w)
+	case "coerce-port-check", "coerce-port-confirm", "coerce-port-stopping":
+		body = m.viewCoercionPort(w)
+	case "coerce-setup":
+		body = m.viewCoercionSetup(w)
+	case "ad-access":
+		body = m.viewADAccess(w)
 	case "host-port-selection":
 		body = m.viewHostPortSelection(w)
 	case "host-selection":
@@ -141,7 +147,7 @@ func (m model) View() string {
 		body = m.viewJobs(w)
 	case "job-details":
 		body = m.viewJobDetails(w)
-	case "finding-details":
+	case "finding-details", "project-results":
 		body = m.viewFindingDetails(w)
 	case "scan-review":
 		body = m.viewScanReview(w)
@@ -243,6 +249,33 @@ func (m model) activityLine() string {
 
 func (m model) footer() string {
 	switch m.screen {
+	case "coerce-setup":
+		if m.adAccessJobRunning() {
+			return "Esc остановить проверку · g задачи"
+		}
+		return "↑/↓ действие · Enter выполнить · c учётка · p приёмник · r адрес · Esc назад"
+	case "coerce-port-check", "coerce-port-stopping":
+		return "Esc отменить запуск"
+	case "coerce-port-confirm":
+		return "Enter / y остановить владельца порта · Esc / n отменить"
+	case "ad-access":
+		return "↑/↓ проверка · Enter запуск · c учётка · h хост · r приёмник · p Responder · Esc назад/отмена"
+	case "interaction-targets":
+		return "↑/↓ машина · Enter выбрать · Esc назад"
+	case "mysql-setup", "pg-setup":
+		return "↑/↓ учётка · Enter подключиться · p порт · c учётки · Esc назад"
+	case "mysql-console", "pg-console":
+		return "↑/↓ выбор · Enter действие · PgUp/PgDn текст · Esc назад"
+	case "ssh-dictionary":
+		return "s / Enter запуск · u пользователь · p словарь · r скорость · Esc назад/отмена"
+	case "ssh-password-lists":
+		return "↑/↓ словарь · Enter выбрать · f путь · Esc назад"
+	case "web-discovery":
+		return "s запуск · u URL · w словарь · ↑/↓ результаты · e экспорт · Esc назад/отмена"
+	case "web-wordlists":
+		return "↑/↓ словарь · / поиск · Enter выбрать · p путь · Esc назад"
+	case "sqli-form", "file-upload":
+		return "s проверить · u URL · c учётка · ↑/↓ результаты · e экспорт · Esc назад/отмена"
 	case "ftp-setup":
 		return "↑↓ учётка · Enter вход · c Credentials · p порт · s FTP/FTPS · t сертификат · Esc назад"
 	case "ftp-browser":
@@ -319,9 +352,27 @@ func (m model) footer() string {
 	case "jobs":
 		return "↑/↓ задача   Enter подробности и лог   x отменить   c очистить   e экспорт   Esc назад"
 	case "job-details":
-		return "↑/↓ журнал   Enter к результату   x отменить   e экспорт   Esc задачи"
+		if !m.jobDetailRaw {
+			return "Enter результаты · r журнал · x отменить · e экспорт · Esc задачи"
+		}
+		return "↑/↓ журнал   Enter результаты   r журнал/итог   x отменить   e экспорт   Esc задачи"
+	case "project-results":
+		if m.resultDeleteConfirm {
+			return "Enter подтвердить удаление · Esc отменить"
+		}
+		if m.findingPane == 1 {
+			back := "список"
+			if m.findingDirectReturn {
+				back = "назад"
+			}
+			if m.splitResultDetails(m.width) {
+				return "←/→ панель · ↑/↓ выбор/прокрутка · Tab раздел · r отчёт · Esc " + back
+			}
+			return "Tab раздел · r отчёт · [/] находки · ↑/↓ прокрутка · Esc " + back
+		}
+		return "Enter карточка · Del/d удалить · / поиск · f фильтр · Esc назад · Space отметить · v порты"
 	case "finding-details":
-		return "↑/↓ выбор слева / прокрутка справа   ←/→ панель   PgUp/PgDn текст   r технические данные   Esc назад   g задачи"
+		return "↑/↓ выбор/прокрутка · Enter подробности · Del удалить · r технические данные · Esc назад"
 	case "scan-review":
 		return "↑/↓ параметр   ←/→ пресет   Enter выбрать   Home запуск   Esc проверки   g задачи"
 	case "catalog-groups":
@@ -377,7 +428,7 @@ func (m model) footer() string {
 	case "spray-module-result":
 		return "Enter/Esc назад к результатам"
 	case "history":
-		return "↑/↓ запуск   Enter открыть на столе   e экспорт   Esc стол"
+		return "↑/↓ запуск   Enter результаты запуска   e экспорт   Esc стол"
 	case "repair-target":
 		return "Enter исправить   Esc отмена"
 	case "input":
@@ -759,7 +810,7 @@ func (m model) viewJobs(w int) string {
 		body.WriteString(mutedStyle.Render("Пока ничего не запускалось. Esc → стол, Enter → сканирование."))
 		return m.renderPanel(w, body.String())
 	}
-	body.WriteString(mutedStyle.Render("Прогресс текущего этапа · x отменить · Enter подробности и лог") + "\n\n")
+	body.WriteString(mutedStyle.Render("Прогресс текущего этапа · x отменить · Enter итог задачи") + "\n\n")
 	lo, hi := windowRange(m.jobIndex, len(rows), max(1, (m.panelRows()-2)/2))
 	body.WriteString(moreLine(lo, true))
 	for i := lo; i < hi; i++ {
@@ -967,7 +1018,7 @@ func (m model) viewSettings(w int) string {
 
 func (m model) viewHistory(w int) string {
 	var body strings.Builder
-	body.WriteString(headingStyle.Render("История запусков") + "\n\n")
+	body.WriteString(headingStyle.Render("История запусков") + "\nEnter — результаты выбранного запуска · e — экспорт\n\n")
 	if len(m.history) == 0 {
 		body.WriteString("Запусков пока нет.\n")
 	} else {
@@ -975,7 +1026,7 @@ func (m model) viewHistory(w int) string {
 		body.WriteString(moreLine(lo, true))
 		for i := lo; i < hi; i++ {
 			r := m.history[i]
-			line := fmt.Sprintf("#%-5d %-19s %-10s %s", r.ID, r.StartedAt.Local().Format("2006-01-02 15:04"), r.Status, resultCounts(r.Findings))
+			line := fmt.Sprintf("#%-5d %-19s %-10s %s", r.ID, r.StartedAt.Local().Format("2006-01-02 15:04"), runStatusLabel(r.Status), resultCounts(groupedProjectResults(orderedResults(r.Findings))))
 			body.WriteString(renderListRow(line, i == m.historyIndex, w))
 		}
 		body.WriteString(moreLine(len(m.history)-hi, false))
@@ -991,7 +1042,10 @@ func (m model) viewRepair(w int) string {
 }
 
 func (m model) viewInput(w int) string {
-	label := map[string]string{"select-host-port": "Открытый порт: 445, 443/tcp или 53/udp", "ad-cidr": "Частная IPv4-подсеть CIDR (например 192.168.1.0/24)", "ptr-server": "IP DNS-сервера (например 10.0.0.10 или 10.0.0.10:53)", "mysql-port": "TCP-порт MySQL", "mysql-user": "Пользователь MySQL (Enter — пустое имя)", "mysql-database": "База MySQL (Enter — без выбранной базы)", "mysql-query": "SQL чтение или :rows users 100", "ssh-dict-user": "SSH-пользователь", "ssh-dict-users": "Файл пользователей (Enter — один пользователь)", "ssh-dict-passwords": "Файл словаря паролей", "ssh-dict-port": "TCP-порт SSH", "ssh-dict-rps": "SSH: попыток в секунду (0 — без ограничения скорости)", "ssh-dict-workers": "SSH: потоки 1–64", "ssh-dict-delay": "Пауза между попытками, мс: 0–60000", "web-wordlist-filter": "Поиск словаря по имени (Enter — все)", "web-discovery-url": "HTTP/HTTPS URL", "web-discovery-wordlist": "Путь к словарю (Enter — встроенный)", "web-discovery-extensions": "Расширения через запятую: php,html,txt", "web-discovery-vhost": "Virtual host (Enter — очистить)", "web-discovery-statuses": "HTTP-статусы через запятую (Enter — стандартные)", "web-discovery-sizes": "Исключить размеры ответов, байт, через запятую", "web-discovery-rps": "Запросов в секунду (0 — до 100)", "web-discovery-workers": "Параллельность: 1–64", "pg-port": "TCP-порт PostgreSQL", "pg-user": "Имя роли PostgreSQL для входа без пароля", "pg-database": "База PostgreSQL", "pg-query": "SQL только чтение или :rows public.table 100", "cred-username": "Имя пользователя", "cred-domain": "Домен (Enter — пропустить)", "cred-secret": "Пароль", "cred-notes": "Заметка (Enter — пропустить)", "lfi-url": "URL выбранного сервиса", "lfi-parameter": "Query-параметр для проверки LFI", "lfi-vhost": "Virtual host (Enter — очистить)", "kyocera-port": "TCP-порт сервиса Kyocera (обычно 9091)", "kyocera-wait": "Пауза перед запросом книги, сек (0–60)", "ftp-port": "TCP-порт FTP-сервера", "ftp-path": "Путь FTP-каталога", "smb-port": "TCP-порт выбранного SMB-сервиса", "module-share": "Имя SMB-шары для поиска конфигураций", "mssql-nse": "NSE: ms-sql-info / ms-sql-hasdbaccess / ms-sql-tables", "mssql-port": "TCP-порт MSSQL", "mssql-columns": "Таблица (schema.table)", "mssql-rows": "Таблица и число строк (dbo.users 100; максимум 500)", "mssql-count": "Таблица (schema.table)", "mssql-transfer-local": "Локальный файл для передачи", "mssql-transfer-address": "Наш IP, доступный Windows (VPN/IP интерфейса)", "mssql-transfer-port": "Порт Python HTTP-сервера", "mssql-transfer-remote": "Путь назначения на Windows (%TEMP%\\winPEAS.exe)", "mssql-winpeas": "Путь WinPEAS.exe на Windows", "mssql-report": "Путь текстового отчёта на Windows", "mssql-command": "Команда ОС через xp_cmdshell", "mssql-query": "SQL-запрос (может менять данные и настройки)", "mssql-database": "Имя базы MSSQL", "winrm-port": "TCP-порт WinRM", "winrm-path": "Каталог Windows (например C:\\Users)", "winrm-shell-command": "Команда в PowerShell-сессии", "winrm-command": "Одна команда PowerShell", "bulk-port": "Один порт на выбранных хостах (445, 443/tcp, 53/udp)", "new-project": "Название проекта", "add-target": "IP, имя хоста или URL", "add-network": "Подсеть CIDR (например 10.0.0.0/24)", "search": "Фильтр шаблонов", "disc-ports": "Порты (напр. 22,80,443,8000-8100)"}[m.inputAction]
+	label := map[string]string{"select-host-port": "Открытый порт: 445, 443/tcp или 53/udp", "ad-cidr": "Частная IPv4-подсеть CIDR (например 192.168.1.0/24)", "ptr-server": "IP DNS-сервера (например 10.0.0.10 или 10.0.0.10:53)", "mysql-port": "TCP-порт MySQL", "mysql-user": "Пользователь MySQL (Enter — пустое имя)", "mysql-database": "База MySQL (Enter — без выбранной базы)", "mysql-query": "SQL чтение или :rows users 100", "ssh-dict-user": "SSH-пользователь", "ssh-dict-users": "Файл пользователей (Enter — один пользователь)", "ssh-dict-passwords": "Файл словаря паролей", "ssh-dict-port": "TCP-порт SSH", "ssh-dict-rps": "SSH: попыток в секунду (0 — без ограничения скорости)", "ssh-dict-workers": "SSH: потоки 1–64", "ssh-dict-delay": "Пауза между попытками, мс: 0–60000", "web-wordlist-filter": "Поиск словаря по имени (Enter — все)", "web-discovery-url": "HTTP/HTTPS URL", "web-discovery-wordlist": "Путь к словарю (Enter — встроенный)", "web-discovery-extensions": "Расширения через запятую: php,html,txt", "web-discovery-vhost": "Virtual host (Enter — очистить)", "web-discovery-statuses": "HTTP-статусы через запятую (Enter — стандартные)", "web-discovery-sizes": "Исключить размеры ответов, байт, через запятую", "web-discovery-rps": "Запросов в секунду (0 — до 100)", "web-discovery-workers": "Параллельность: 1–64", "pg-port": "TCP-порт PostgreSQL", "pg-user": "Имя роли PostgreSQL для входа без пароля", "pg-database": "База PostgreSQL", "pg-query": "SQL только чтение или :rows public.table 100", "cred-username": "Имя пользователя", "cred-domain": "Домен (Enter — пропустить)", "cred-secret": "Пароль", "cred-notes": "Заметка (Enter — пропустить)", "lfi-url": "URL выбранного сервиса", "lfi-parameter": "Query-параметр для проверки LFI", "lfi-vhost": "Virtual host (Enter — очистить)", "kyocera-port": "TCP-порт сервиса Kyocera (обычно 9091)", "kyocera-wait": "Пауза перед запросом книги, сек (0–60)", "ftp-port": "TCP-порт FTP-сервера", "ftp-path": "Путь FTP-каталога", "smb-port": "TCP-порт выбранного SMB-сервиса", "module-share": "Имя SMB-шары для поиска конфигураций", "mssql-nse": "NSE: ms-sql-info / ms-sql-hasdbaccess / ms-sql-tables", "mssql-port": "TCP-порт MSSQL", "mssql-columns": "Таблица (schema.table)", "mssql-rows": "Таблица и число строк (dbo.users 100; максимум 500)", "mssql-count": "Таблица (schema.table)", "mssql-transfer-local": "Локальный файл для передачи", "mssql-transfer-address": "Наш IP, доступный Windows (VPN/IP интерфейса)", "mssql-transfer-port": "Порт Python HTTP-сервера", "mssql-transfer-remote": "Путь назначения на Windows (%TEMP%\\winPEAS.exe)", "mssql-winpeas": "Путь WinPEAS.exe на Windows", "mssql-report": "Путь текстового отчёта на Windows", "mssql-command": "Команда ОС через xp_cmdshell", "mssql-query": "SQL-запрос (может менять данные и настройки)", "mssql-database": "Имя базы MSSQL", "winrm-port": "TCP-порт WinRM", "winrm-path": "Каталог Windows (например C:\\Users)", "winrm-shell-command": "Команда в PowerShell-сессии", "winrm-command": "Одна команда PowerShell", "bulk-port": "Один порт на выбранных хостах (445, 443/tcp, 53/udp)", "new-project": "Название проекта", "add-target": "IP, имя хоста или URL", "add-network": "Подсеть CIDR (например 10.0.0.0/24)", "project-results-search": "Поиск результатов: хост, порт, CVE, название или текст", "search": "Фильтр шаблонов", "disc-ports": "Порты (напр. 22,80,443,8000-8100)"}[m.inputAction]
+	if label == "" {
+		label = map[string]string{"ad-access-host": "Хост контроллера домена (IP/DNS)", "ad-access-domain": "DNS-имя домена", "ad-coerce-callback": "Локальный IPv4 приёмника, доступный машинам (например адрес VPN)"}[m.inputAction]
+	}
 	if m.inputAction == "setting-value" {
 		label = settingLabels[m.settingsIndex]
 	}
@@ -1012,41 +1066,6 @@ func (m model) viewInput(w int) string {
 	}
 	body := fmt.Sprintf("%s: %s▏\n", label, value)
 	return m.renderPanel(w, body)
-}
-
-func (m model) viewHelp(w int) string {
-	var body strings.Builder
-	body.WriteString(headingStyle.Render("Клавиши") + "\n\n")
-	lines := []string{
-		"d           AD-аудит: интерфейс или ручной CIDR → автоматический проект с ролями DC/AD CS",
-		"1 / 2 / 3   Подсети / все хосты / задачи",
-		"o           Из подсетей — открыть машины выбранного диапазона",
-		"↑ / ↓       Перемещение в колонке",
-		"← / →       Переключить колонку (хосты → порты → детали)",
-		"Tab         То же, по кругу",
-		"Enter       Скан для хоста, всех хостов или выбранного порта (на столе)",
-		"v           Общий список найденных портов и сервисов",
-		"/           Фильтр по хосту, порту, имени сервиса, продукту или версии",
-		"Space / a   Выбрать хост / все хосты из текущего фильтра",
-		"w           Окно подсетей: CIDR и обнаружение машин",
-		"h           Из подсетей — перейти к окну хостов",
-		"g           Задачи всех проектов (прогресс, отмена x, Enter — результат)",
-		"a           Добавить хост или CIDR",
-		"d           Удалить хост / подсеть в соответствующем окне",
-		"r           Исправить повреждённый адрес хоста",
-		"4 / i       Взаимодействие проекта: Web / SMB / FTP / SQL / WinRM",
-		"t           Библиотека проверок проекта (для «Полный скан»)",
-		"p           Настройки сканирования",
-		"h           История запусков",
-		"e           Экспорт (JSON/HTML/CSV в reports/)",
-		"Space       Отметить проверку / выбрать хост для группового скана",
-		"Enter       Открыть, выбрать или запустить",
-		"Esc         Назад",
-	}
-	for _, l := range lines {
-		body.WriteString(l + "\n")
-	}
-	return m.renderPanel(w, body.String())
 }
 
 func (m model) panelStyle(w int) lipgloss.Style {

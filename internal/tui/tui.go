@@ -5,6 +5,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -55,6 +56,7 @@ type model struct {
 
 	screen     string
 	helpReturn string
+	helpOffset int
 
 	// projects
 	projects            []domain.Project
@@ -89,8 +91,21 @@ type model struct {
 	serviceIndex             int
 	serviceInventoryIndex    int
 	serviceInventoryFilter   string
+	serviceInventoryProject  bool
 	serviceInventoryEditing  bool
 	serviceInventorySelected map[string]bool
+	projectResultsReturn     string
+	findingDetailFocus       bool // right pane scrolls; otherwise arrows select a finding
+	findingDirectReturn      bool // opened from a host result rather than the result list
+	resultsScope             resultScope
+	projectResultsSearch     string
+	projectResultsFilter     string
+	projectResultsSelected   map[string]bool
+	resultDeleteConfirm      bool
+	resultDeleting           bool
+	resultDeleteGeneration   int
+	resultDeleteCount        int
+	resultDeleteFindings     []domain.Finding
 	findingIndex             int
 	focusCol                 int // 0 hosts, 1 services, 2 details/findings
 	findingDetail            *domain.Finding
@@ -100,28 +115,48 @@ type model struct {
 	findingImpact            string
 	findingRemediation       string
 	findingClassified        string
+	findingSection           int // 0 overview, 1 evidence, 2 recommendations
 	findingRaw               bool
 	findingPane              int // 0 result list, 1 detail scrolling
 
 	// background jobs
-	jobs       []*job
-	jobSeq     int
-	jobEvents  chan jobEvent
-	jobIndex   int
-	jobsReturn string
-	logOffset  int
+	jobs         []*job
+	jobSeq       int
+	jobEvents    chan jobEvent
+	jobIndex     int
+	jobsReturn   string
+	logOffset    int
+	jobDetailRaw bool
 
 	// Local Active Directory discovery window. The scan is unauthenticated,
 	// read-only, and restricted to a selected private IPv4 interface subnet.
-	adNetworks     []adscan.Network
-	adNetworkIndex int
-	adScanRunning  bool
-	adScanDone     int
-	adScanTotal    int
-	adScanResult   *adscan.Result
-	adScanError    string
-	adScanReturn   string
-	adScanJobID    int
+	adNetworks                                       []adscan.Network
+	adNetworkIndex                                   int
+	adScanNewProject                                 bool
+	adScanRunning                                    bool
+	adScanDone                                       int
+	adScanTotal                                      int
+	adScanResult                                     *adscan.Result
+	adScanError                                      string
+	adScanReturn                                     string
+	adScanJobID                                      int
+	adAccessReturn                                   string
+	adAccessHost                                     string
+	adAccessDomain                                   string
+	adCoerceCallback                                 string
+	adAccessIndex                                    int
+	adAccessCreds                                    []domain.Credential
+	adAccessCred                                     int
+	adAccessJobID                                    int
+	adResponderJobID                                 int
+	coerceActionIndex                                int
+	coerceCallbackAuto                               bool
+	coercePortGeneration                             int
+	coercePortAction, coercePortIP, coercePortReturn string
+	coercePortApproved                               bool
+	coercePortOwners                                 []adscan.PortOwner
+	coercePortLease                                  *adscan.PortLease
+	coercePortCancel                                 context.CancelFunc
 
 	// action menu (opened with Enter)
 	bulkPort      int
@@ -221,7 +256,9 @@ type model struct {
 	credentialsReturn string
 }
 
-func Run(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine.Engine, dir string) error {
+func Run(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine.Engine, dir string) (runErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() { cancel(); runErr = errors.Join(runErr, adscan.RestoreCoercionPorts()) }()
 	m := model{
 		ctx:       ctx,
 		store:     s,
@@ -270,6 +307,7 @@ func (m *model) openProject(p domain.Project) {
 	m.hostNetwork = ""
 	m.networkIndex = 0
 	m.history, _ = m.store.Runs(m.ctx, p.ID)
+	m.historyIndex = 0
 	m.loadInventory()
 	m.hostIndex = 0
 	if len(m.hostOrder) == 0 {
@@ -277,6 +315,13 @@ func (m *model) openProject(p domain.Project) {
 	}
 	m.serviceIndex = 0
 	m.findingIndex = 0
+	m.projectResultsSearch = ""
+	m.resultsScope = resultScope{}
+	m.projectResultsSelected = nil
+	m.resultDeleteConfirm = false
+	m.resultDeleting = false
+	m.resultDeleteGeneration++
+	m.projectResultsFilter = "important"
 	m.focusCol = 0
 	m.screen = "desk"
 	if len(m.hostOrder) == 0 && len(m.networkTargets()) > 0 {
@@ -335,7 +380,7 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// case impossible to save. Every other action still treats empty
 		// input as "cancel this step".
 		isCred := strings.HasPrefix(action, "cred-")
-		if value == "" && !isCred && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
+		if value == "" && !isCred && action != "ad-access-host" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
 			return m, nil
 		}
 		switch action {
@@ -657,6 +702,22 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adNetworks = append(m.adNetworks, network)
 			m.adNetworkIndex = len(m.adNetworks) - 1
 			m.message = "Выбрана подсеть " + network.CIDR + ". Нажми Enter для сканирования."
+		case "ad-access-host":
+			m.adAccessHost = value
+			m.screen = "ad-access"
+		case "ad-coerce-callback":
+			m.adCoerceCallback = value
+			m.coerceCallbackAuto = false
+			m.screen = "ad-access"
+			if m.inputReturn == "coerce-setup" {
+				m.screen = "coerce-setup"
+			}
+		case "ad-access-domain":
+			m.adAccessDomain = value
+			m.screen = "ad-access"
+			if m.inputReturn == "coerce-setup" {
+				m.screen = "coerce-setup"
+			}
 		case "add-target", "add-network":
 			if !utf8.ValidString(value) {
 				m.message = "Недопустимый символ в адресе. Введи хост заново."
@@ -693,6 +754,13 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.message = "Хост добавлен."
 				}
 			}
+		case "project-results-search":
+			m.projectResultsSelected = nil
+			m.findingPane = 0
+			m.projectResultsSearch = value
+			m.screen = "project-results"
+			m.findingIndex = 0
+			m.refreshProjectResultSelection()
 		case "search":
 			m.search = value
 			m.catalogGroupIndex, m.entryIndex = 0, 0
@@ -1260,7 +1328,7 @@ func renderStyledListRow(text string, selected bool, terminalWidth int, normal, 
 		prefix = "▶ "
 		style = highlight
 	}
-	content := ansi.Truncate(prefix+text, contentWidth, "…")
+	content := ansi.Truncate(prefix+singleLineText(text), contentWidth, "…")
 	// Pad to the exact target width ourselves and skip Style.Width(): lipgloss's
 	// own reflow measures "▶" as wider than ansi.StringWidth does, so asking it
 	// to wrap at a width we already truncated to can fold the last cell of an
@@ -1269,4 +1337,15 @@ func renderStyledListRow(text string, selected bool, terminalWidth int, normal, 
 		content += strings.Repeat(" ", pad)
 	}
 	return style.Padding(0, 1).Render(content) + "\n"
+}
+
+// Labels are one terminal row. Service-provided names must not inject extra
+// rows or terminal controls into every list that uses this renderer.
+func singleLineText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(text))
 }

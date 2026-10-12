@@ -216,6 +216,9 @@ func smbSummary(fs []domain.Finding) []string {
 }
 
 func resultExplanation(f domain.Finding) string {
+	if f.TemplateID == "ui/coercion-summary" {
+		return f.Description
+	}
 	if f.Protocol == "offline" && strings.HasPrefix(f.TemplateID, "offline/cve/") {
 		return f.Description
 	}

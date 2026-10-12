@@ -6,12 +6,14 @@ import (
 	"sort"
 )
 
-const interactionMenuCount = 14
+const interactionMenuCount = 17
+const interactionADScanIndex = 14
 
 func (m *model) openProjectInteractions() {
 	previous := m.screen
 	m.openInteractionMenu()
 	m.interactionReturn = previous
+	m.interactionIndex = interactionADScanIndex // Project inventory setup stays visible on entry.
 }
 func (m model) interactionHosts() []string {
 	hosts := make([]string, 0, len(m.inventory))

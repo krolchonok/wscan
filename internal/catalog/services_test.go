@@ -93,3 +93,25 @@ func TestWinRMServiceGrouping(t *testing.T) {
 		t.Fatalf("fallback grouping without index = %q", got)
 	}
 }
+
+func TestIRCGrouping(t *testing.T) {
+	for _, name := range []string{"irc", "ircs", "ircd", "UnrealIRCd", "inspircd"} {
+		if got := ServiceDirection(domain.Service{Name: name, Port: 16668}); got != "IRC" {
+			t.Fatalf("%s: %s", name, got)
+		}
+	}
+	if got := ServiceDirection(domain.Service{Name: "unknown", Port: 6668}); got != "IRC" {
+		t.Fatal(got)
+	}
+	if got := ServiceDirection(domain.Service{Name: "http", Port: 6668}); got != "Web" {
+		t.Fatal(got)
+	}
+	for _, name := range []string{"irc-info", "irc-botnet-channels", "irc-brute", "irc-sasl-brute", "irc-unrealircd-backdoor"} {
+		if got := Direction(Entry{Path: "nmap/scripts/" + name + ".nse", Service: "Прочие сервисы"}); got != "IRC" {
+			t.Fatalf("%s: %s", name, got)
+		}
+	}
+	if got := Direction(Entry{Path: "nmap/scripts/irc-info.nse", Checked: true, Available: false}); got != UnsupportedGroup {
+		t.Fatal(got)
+	}
+}

@@ -27,6 +27,9 @@ func (m model) updateJobDetails(key string) (tea.Model, tea.Cmd) {
 	visible := m.jobLogRows()
 	last := max(0, len(j.journal)-visible)
 	switch key {
+	case "r":
+		m.jobDetailRaw = !m.jobDetailRaw
+		m.logOffset = -1
 	case "esc", "q":
 		m.screen = "jobs"
 	case "up", "k":
@@ -75,7 +78,12 @@ func (m model) updateJobDetails(key string) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.screen = "desk"
+		if j.runID != 0 {
+			m.openRunResults(j.runID)
+			m.projectResultsReturn = "job-details"
+		} else {
+			m.screen = "desk"
+		}
 	}
 	return m, nil
 }
@@ -85,6 +93,9 @@ func (m model) viewJobDetails(w int) string {
 		return m.renderPanel(w, "Задача недоступна")
 	}
 	j := m.jobs[m.jobIndex]
+	if !m.jobDetailRaw {
+		return m.viewJobSummary(w, j)
+	}
 	lines := []string{
 		fmt.Sprintf("Задача #%d · %s", j.id, m.findProject(j.projectID).Name),
 		j.label,
@@ -113,6 +124,41 @@ func (m model) viewJobDetails(w int) string {
 	}
 	lo = min(max(0, lo), max(0, len(j.journal)-visible))
 	lines = append(lines, j.journal[lo:min(len(j.journal), lo+visible)]...)
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, max(1, w-6), "…")
+	}
+	return m.renderPanel(w, strings.Join(lines, "\n"))
+}
+
+func (m model) viewJobSummary(w int, j *job) string {
+	project := m.findProject(j.projectID).Name
+	if project == "" {
+		project = fmt.Sprintf("#%d", j.projectID)
+	}
+	lines := []string{fmt.Sprintf("Задача #%d · %s", j.id, j.label), "Проект: " + project, "Область: " + j.scope, fmt.Sprintf("Состояние: %s · %s", j.statusLabel(), j.duration().Round(time.Second)), j.progressText(min(20, max(3, w/6))) + " " + j.stage, ""}
+	if j.result != nil {
+		findings := groupedProjectResults(orderedResults(j.result.Findings))
+		lines = append(lines, "РЕЗУЛЬТАТ", resultCounts(findings, len(j.result.Errors)))
+		limit := max(1, m.bodyHeight()-len(lines)-5)
+		for i, f := range findings {
+			if i >= limit {
+				lines = append(lines, fmt.Sprintf("Ещё результатов: %d · Enter открыть", len(findings)-i))
+				break
+			}
+			lines = append(lines, projectResultLabel(f))
+		}
+		if len(findings) == 0 {
+			lines = append(lines, "Детектов не сохранено.")
+		}
+		if len(j.result.Errors) > 0 {
+			lines = append(lines, "Ошибка: "+j.result.Errors[0])
+		}
+	} else if j.errText != "" {
+		lines = append(lines, "Ошибка: "+j.errText)
+	} else {
+		lines = append(lines, "Результат ещё не получен.")
+	}
+	lines = append(lines, "", "Enter — результаты · r — технический журнал · Esc — задачи")
 	for i, line := range lines {
 		lines[i] = ansi.Truncate(line, max(1, w-6), "…")
 	}

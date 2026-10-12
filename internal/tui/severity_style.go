@@ -17,11 +17,15 @@ func severityColor(severity string) lipgloss.Color {
 }
 
 func renderFindingRow(f domain.Finding, selected bool, width int) string {
+	return renderFindingTextRow(f, resultLabel(f), selected, width)
+}
+
+func renderFindingTextRow(f domain.Finding, label string, selected bool, width int) string {
 	severity := domain.EffectiveSeverity(f)
 	if resultClass(f) == "Ошибка" {
 		severity = "error"
 	}
 	color := severityColor(severity)
-	return renderStyledListRow(resultLabel(f), selected, width,
+	return renderStyledListRow(label, selected, width,
 		rowStyle.Foreground(color), selectedRowStyle.Foreground(color).Background(lipgloss.Color("#203638")))
 }

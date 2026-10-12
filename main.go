@@ -31,6 +31,10 @@ var version = "dev"
 var supportedFeatures string
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "coerce" {
+		fatalIf(runCoercionCLI(os.Args[2:]))
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "signatures" {
 		root, err := os.UserConfigDir()
 		fatalIf(err)

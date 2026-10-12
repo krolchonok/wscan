@@ -20,6 +20,7 @@ import (
 
 func (m *model) openADScan() {
 	m.adScanReturn = m.screen
+	m.adScanNewProject = m.current.ID == 0
 	var err error
 	m.adNetworks, err = adscan.LocalNetworks()
 	m.adNetworkIndex = 0
@@ -61,6 +62,13 @@ func (m model) updateADScan(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch key {
+	case "p":
+		if m.current.ID == 0 {
+			m.message = "Текущий проект не открыт; результаты будут сохранены в новый проект"
+		} else {
+			m.adScanNewProject = !m.adScanNewProject
+			m.message = ""
+		}
 	case "up", "k":
 		if m.adNetworkIndex > 0 {
 			m.adNetworkIndex--
@@ -101,6 +109,7 @@ func (m model) updateADScan(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) launchADScan(cidr string) {
+	worker := *m // Capture the destination before the background scan starts.
 	m.jobSeq++
 	id := m.jobSeq
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -110,12 +119,18 @@ func (m *model) launchADScan(cidr string) {
 		status: statusRunning, stage: "подготовка диапазона…",
 		started: time.Now(), cancel: cancel, scope: cidr,
 	}
+	if !worker.adScanNewProject && worker.current.ID != 0 {
+		j.projectID = worker.current.ID
+		j.options = []string{"Сохранение: текущий проект " + worker.current.Name}
+	} else {
+		j.options = []string{"Сохранение: новый проект"}
+	}
 	m.jobs = append(m.jobs, j)
 	m.adScanJobID = id
 	m.initJobLog(j)
 	ch := m.jobEvents
 	go func() {
-		result, details, projectID, projectName, err := m.runADScan(ctx, cidr, func(stage string, counts ...int) {
+		result, details, projectID, projectName, err := worker.runADScan(ctx, cidr, func(stage string, counts ...int) {
 			ev := jobEvent{id: id, stage: stage, hasProgress: len(counts) == 2}
 			if len(counts) == 2 {
 				ev.completed, ev.total = counts[0], counts[1]
@@ -127,6 +142,36 @@ func (m *model) launchADScan(cidr string) {
 		})
 		ch <- jobEvent{id: id, done: true, result: result, adResult: details, projectID: projectID, projectName: projectName, err: err}
 	}()
+}
+
+// adResultProject adds discovered targets without replacing existing scope or settings.
+func (m model) adResultProject(ctx context.Context, cidr string, details adscan.Result) (int64, string, error) {
+	targets := []string{cidr}
+	for _, node := range details.Hosts {
+		targets = append(targets, node.Address)
+	}
+	targets = uniqueStrings(targets)
+	if m.adScanNewProject || m.current.ID == 0 {
+		name := adProjectName(cidr, details)
+		id, err := m.store.CreateProjectWithTargets(ctx, name, targets)
+		return id, name, err
+	}
+	projects, err := m.store.ListProjects(ctx)
+	if err != nil {
+		return 0, "", err
+	}
+	for _, project := range projects {
+		if project.ID != m.current.ID {
+			continue
+		}
+		for _, target := range targets {
+			if err := m.store.AddTarget(ctx, project.ID, target); err != nil {
+				return project.ID, project.Name, fmt.Errorf("не удалось дополнить цели AD-проекта: %w", err)
+			}
+		}
+		return project.ID, project.Name, nil
+	}
+	return 0, "", fmt.Errorf("выбранный проект больше не существует; новый проект автоматически не создаётся")
 }
 
 func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter) (engine.Result, *adscan.Result, int64, string, error) {
@@ -150,20 +195,14 @@ func (m model) runADScan(ctx context.Context, cidr string, emit progressReporter
 	for _, dnsErr := range dnsErrors {
 		emit("DNS SRV: " + dnsErr)
 	}
-	emit("Создаю проект и сохраняю инвентаризацию…")
-	projectName := adProjectName(cidr, details)
-	targets := []string{cidr}
-	for _, node := range details.Hosts {
-		targets = append(targets, node.Address)
-	}
-	targets = uniqueStrings(targets)
-	projectID, err := m.store.CreateProjectWithTargets(ctx, projectName, targets)
+	emit("Сохраняю AD-инвентаризацию в выбранный проект…")
+	projectID, projectName, err := m.adResultProject(ctx, cidr, details)
 	if err != nil {
-		return engine.Result{}, &details, 0, "", fmt.Errorf("не удалось создать AD-проект: %w", err)
+		return engine.Result{}, &details, projectID, projectName, err
 	}
 	runID, err := m.store.StartRun(ctx, projectID)
 	if err != nil {
-		return engine.Result{}, &details, projectID, projectName, fmt.Errorf("проект создан, но не удалось начать запись запуска: %w", err)
+		return engine.Result{}, &details, projectID, projectName, fmt.Errorf("не удалось начать запись AD-запуска в выбранном проекте: %w", err)
 	}
 	status := "completed"
 	defer func() {
@@ -646,6 +685,11 @@ func adPortNames(port int) (name, description string) {
 func (m model) viewADScan(w int) string {
 	var body strings.Builder
 	body.WriteString(headingStyle.Render("AD-аудит сети") + "\n")
+	destination := "новый проект"
+	if !m.adScanNewProject && m.current.ID != 0 {
+		destination = fmt.Sprintf("текущий проект %q (#%d)", m.current.Name, m.current.ID)
+	}
+	body.WriteString("Сохранение: " + destination + " · p переключить\n")
 	body.WriteString("Инвентаризация DC, Global Catalog, DNS, AD CS и Windows-служб. Без учётных данных и изменений.\n\n")
 	if len(m.adNetworks) == 0 {
 		body.WriteString("Активные частные IPv4-интерфейсы не найдены. Можно указать CIDR вручную.\n")

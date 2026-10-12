@@ -16,7 +16,7 @@ var templateExpression = regexp.MustCompile(`\{\{[^}\n]+\}\}`)
 
 // Modules returns only implemented modules, never placeholder APIs.
 func Modules() []string {
-	return []string{"nuclei/net", "nuclei/bytes", "nuclei/ssh", "nuclei/redis", "nuclei/mysql", "nuclei/postgres", "nuclei/smb", "nuclei/mssql", "nuclei/fs", "nuclei/vnc", "nuclei/rdp", "nuclei/ldap"}
+	return []string{"nuclei/net", "nuclei/bytes", "nuclei/ssh", "nuclei/redis", "nuclei/mysql", "nuclei/postgres", "nuclei/smb", "nuclei/mssql", "nuclei/fs", "nuclei/vnc", "nuclei/rdp", "nuclei/ldap", "wscan/mailaudit"}
 }
 
 // ModuleError is shared by offline compatibility checks and runtime require().

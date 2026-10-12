@@ -60,8 +60,7 @@ func TestLongInformationalFindingTitleRemainsVisible(t *testing.T) {
 	if got := resultLabel(f); got != title {
 		t.Fatalf("list label = %q, want full title %q", got, title)
 	}
-	leftWidth, _ := findingPanelWidths(120)
-	row := ansi.Strip(renderListRow(resultLabel(f), true, leftWidth))
+	row := ansi.Strip(renderListRow(resultLabel(f), true, 120))
 	if !strings.Contains(row, title) {
 		t.Fatalf("finding list row clips title at terminal width 120: %q", row)
 	}

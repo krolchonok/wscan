@@ -16,7 +16,14 @@ type serviceInventoryRow struct {
 
 func (m model) serviceInventoryRows() []serviceInventoryRow {
 	var rows []serviceInventoryRow
-	for _, host := range m.hostOrder {
+	hosts := m.hostOrder
+	if m.serviceInventoryProject {
+		hosts = make([]string, 0, len(m.inventory))
+		for host := range m.inventory {
+			hosts = append(hosts, host)
+		}
+	}
+	for _, host := range hosts {
 		for _, service := range m.servicesFor(host) {
 			rows = append(rows, serviceInventoryRow{host: host, service: service})
 		}
@@ -84,7 +91,13 @@ func (m model) updateServiceInventory(key string) (tea.Model, tea.Cmd) {
 	rows := filterServiceInventory(m.serviceInventoryRows(), m.serviceInventoryFilter)
 	switch key {
 	case "esc", "q":
-		m.screen = "desk"
+		if m.serviceInventoryProject {
+			m.screen = "project-results"
+			m.serviceInventoryProject = false
+			m.refreshProjectResultSelection()
+		} else {
+			m.screen = "desk"
+		}
 		m.serviceInventorySelected = nil
 	case "/", "f":
 		m.serviceInventoryEditing = true
@@ -140,7 +153,15 @@ func (m model) updateServiceInventory(key string) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.actionHosts = make([]string, 0, len(m.serviceInventorySelected))
-			for _, host := range m.hostOrder {
+			hosts := m.hostOrder
+			if m.serviceInventoryProject {
+				hosts = make([]string, 0, len(m.serviceInventorySelected))
+				for host := range m.serviceInventorySelected {
+					hosts = append(hosts, host)
+				}
+				sort.Strings(hosts)
+			}
+			for _, host := range hosts {
 				if m.serviceInventorySelected[host] {
 					m.actionHosts = append(m.actionHosts, host)
 				}
@@ -171,6 +192,9 @@ func (m model) viewServiceInventory(width, height int) string {
 	filter := m.serviceInventoryFilter
 	if m.serviceInventoryEditing {
 		filter += "▏"
+	}
+	if m.serviceInventoryProject {
+		body.WriteString("Все хосты и сети текущего проекта · Esc к результатам\n")
 	}
 	body.WriteString("Фильтр: " + filter + "\n")
 	if len(rows) == 0 {

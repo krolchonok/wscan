@@ -38,6 +38,14 @@ func (m *model) openSpraySetup(svc domain.Service) {
 }
 
 func (m model) updateSpraySetup(key string) (tea.Model, tea.Cmd) {
+	if m.sprayTarget == nil {
+		m.screen = "desk"
+		m.message = "Сервис для проверки учёток не выбран"
+		return m, nil
+	}
+	if m.sprayChecked == nil {
+		m.sprayChecked = map[int64]bool{}
+	}
 	switch key {
 	case "esc", "q":
 		m.screen = "desk"
@@ -81,12 +89,19 @@ func (m model) selectedSprayCredentials() []domain.Credential {
 
 func (m model) viewSpraySetup(w int) string {
 	t := m.sprayTarget
+	if t == nil {
+		return m.renderPanel(w, "Сервис не выбран. Esc — вернуться к хостам.")
+	}
 	body := headingStyle.Render(fmt.Sprintf("Credential-атака — %s:%d/%s", t.Host, t.Port, t.Protocol)) + "\n"
 	body += "Отметь credentials для проверки (Space), затем Enter — запуск.\n\n"
-	for i, c := range m.sprayCredentials {
+	lo, hi := windowRange(m.sprayCredIndex, len(m.sprayCredentials), max(1, m.panelRows()-4))
+	body += moreLine(lo, true)
+	for i := lo; i < hi; i++ {
+		c := m.sprayCredentials[i]
 		line := checkMark(m.sprayChecked[c.ID]) + " " + credTypeLabel(c.Type) + "  " + credIdentLabel(c)
 		body += renderListRow(line, i == m.sprayCredIndex, w)
 	}
+	body += moreLine(len(m.sprayCredentials)-hi, false)
 	return m.renderPanel(w, body)
 }
 

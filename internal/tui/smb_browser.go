@@ -125,6 +125,14 @@ func (m *model) openInteractionMenu() {
 			}
 		}
 	}
+	if m.focusCol == 0 {
+		for _, s := range m.servicesFor(host) {
+			if s.Port == 445 && (s.Protocol == "tcp" || s.Protocol == "") && (s.State == "open" || s.State == "") {
+				m.interactionIndex = interactionCoerceIndex
+				break
+			}
+		}
+	}
 	m.screen = "interaction-menu"
 	m.message = ""
 }
@@ -136,6 +144,10 @@ func (m model) updateInteractionMenu(key string) (tea.Model, tea.Cmd) {
 		if m.screen == "" || m.screen == "interaction-menu" {
 			m.screen = "desk"
 		}
+	case "home":
+		m.interactionIndex = 0
+	case "end":
+		m.interactionIndex = interactionMenuCount - 1
 	case "h":
 		m.interactionHostIndex = 0
 		m.screen = "interaction-targets"
@@ -144,6 +156,23 @@ func (m model) updateInteractionMenu(key string) (tea.Model, tea.Cmd) {
 	case "down", "j", "tab":
 		m.interactionIndex = (m.interactionIndex + 1) % interactionMenuCount
 	case "enter":
+		if m.interactionIndex == interactionCoerceIndex {
+			return m.openHostCoercion()
+		}
+		if m.interactionIndex == 15 {
+			m.openADAccess()
+			m.adAccessHost = m.smbBrowser.host
+			if m.adAccessHost != "" && (m.adCoerceCallback == "" || m.coerceCallbackAuto) {
+				m.adCoerceCallback = ""
+				m.coerceCallbackAuto = true
+				return m, m.coerceRouteCmd(m.adAccessHost)
+			}
+			return m, nil
+		}
+		if m.interactionIndex == 14 {
+			m.openADScan()
+			return m, nil
+		}
 		if m.interactionIndex == 13 {
 			return m.openNSEVuln()
 		}
@@ -440,7 +469,7 @@ func exportSMBEntries(directory, host, share, remote string, entries []js.SMBEnt
 }
 
 func (m model) viewInteractionMenu(w int) string {
-	body := headingStyle.Render("Взаимодействие проекта") + fmt.Sprintf("\n\nХост: %s · h выбрать хост\n↑/↓ инструмент · Enter открыть\n\n", smbDisplayName(m.smbBrowser.host))
+	body := headingStyle.Render("Взаимодействие проекта") + fmt.Sprintf("\n\nХост: %s · h выбрать хост\n↑/↓ инструмент · Home/End начало/конец · Enter открыть\n\n", smbDisplayName(m.smbBrowser.host))
 	rows := []string{
 		fmt.Sprintf("SMB :%d — проводник шар (guest / без пароля)", m.smbBrowser.port),
 		fmt.Sprintf("WinRM :%d — вход с учёткой, права, файлы, команды", m.winrmBrowser.options.Port),
@@ -456,11 +485,16 @@ func (m model) viewInteractionMenu(w int) string {
 		fmt.Sprintf("Kyocera :%d — выгрузка адресной книги без аутентификации", m.kyoceraBook.target.Port),
 		"CVE — офлайн: сверить сохранённые версии (весь проект)",
 		"NSE --script vuln — активные проверки (весь проект)",
+		"AD Scan — инвентаризация сети в текущий проект…",
+		"AD — учётки, Kerberos, SYSVOL и coercion…",
+		"Coerce / Responder — выбранная машина…",
 	}
-	lo, hi := windowRange(m.interactionIndex, len(rows), max(1, m.panelRows()-6))
+	lo, hi := windowRange(m.interactionIndex, len(rows), max(1, m.panelRows()-8))
+	body += moreLine(lo, true)
 	for i := lo; i < hi; i++ {
 		body += renderListRow(rows[i], i == m.interactionIndex, w)
 	}
+	body += moreLine(len(rows)-hi, false)
 	return m.renderPanel(w, body)
 }
 
