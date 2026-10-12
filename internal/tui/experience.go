@@ -958,7 +958,7 @@ func (m *model) openDiscOptions() {
 	m.discProject = m.current
 	m.discOnlyKnown = false
 	m.discHosts = append([]string(nil), m.actionHosts...)
-	m.discOptIndex = 9
+	m.discOptIndex = 0
 	m.discSetIndex = 3
 	m.discTCP = true
 	m.discUDP = false

@@ -1,6 +1,7 @@
 # Перенос wscan
 
-Релиз v0.1.4 рассчитан на Linux x86-64, собран без CGO. Go на новом ПК не нужен.
+Сборки Linux и Windows x86-64 выпускаются без CGO. Go на новом ПК не нужен.
+Ниже показан запуск Linux-архива; для Windows используй отдельный ZIP.
 Архив содержит приложение, документацию и согласованный WinPEAS для ручного запуска.
 Библиотека проверок скачивается отдельно из https://github.com/krolchonok/wscan-templates.
 Внешние Nuclei/Nmap/Metasploit не нужны.
@@ -22,7 +23,8 @@ cd wscan-linux-amd64
 Обновление: `./start.sh library update` или общие настройки TUI.
 Python/Ruby нужны только функциям, использующим эти интерпретаторы.
 WinPEAS автоматически обычным сканированием не запускается.
-Windows/macOS этим архивом не поддерживаются.
+Для Windows x86-64 предусмотрен отдельный ZIP: [запуск и ограничения](WINDOWS.md).
+Linux-архив на Windows не запускается; готовой сборки macOS нет.
 
 ## Работа без интернета и перенос проектов
 
@@ -36,7 +38,8 @@ Windows/macOS этим архивом не поддерживаются.
 
 ## Сборка
 
-Нужен Go версии из go.mod; упаковка использует Python 3 и tar.
+Нужен Go версии из go.mod; упаковка Linux использует Python 3 и tar,
+упаковка Windows — Python 3 (`python scripts/package-windows-amd64.py dev`).
 
 ```sh
 ./scripts/package-linux-amd64.sh v0.1.4
