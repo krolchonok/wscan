@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"wscan/internal/adscan"
+	"wscan/internal/app"
 	"wscan/internal/catalog"
 	"wscan/internal/dependencies"
 	"wscan/internal/discovery"
@@ -32,6 +33,17 @@ import (
 )
 
 type model struct {
+	clientSource     string
+	shared           *app.Service
+	guided           bool
+	webURL           string
+	wizardStep       int
+	wizardIndex      int
+	wizardScope      string
+	wizardProfile    int
+	overviewIndex    int
+	hiddenSharedJobs map[int]bool
+
 	catalogReadOnly      bool
 	sshDictionary        sshDictionaryState
 	smbBrowser           smbBrowserState
@@ -134,6 +146,8 @@ type model struct {
 	// read-only, and restricted to a selected private IPv4 interface subnet.
 	adNetworks                                       []adscan.Network
 	adNetworkIndex                                   int
+	adScanDNS                                        adscan.DNSOptions
+	adScanAdvanced                                   bool
 	adScanNewProject                                 bool
 	adScanRunning                                    bool
 	adScanDone                                       int
@@ -261,10 +275,19 @@ type model struct {
 }
 
 func Run(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine.Engine, dir string) (runErr error) {
+	service, err := app.NewService(ctx, s, c, scan)
+	if err != nil {
+		return err
+	}
+	defer service.Close()
+	return RunWithService(ctx, s, c, scan, dir, service, "")
+}
+func RunWithService(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine.Engine, dir string, service *app.Service, webURL string) (runErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() { cancel(); runErr = errors.Join(runErr, adscan.RestoreCoercionPorts()) }()
 	m := model{
-		ctx:       ctx,
+		ctx:    ctx,
+		shared: service, guided: true, webURL: webURL,
 		store:     s,
 		cat:       c,
 		scanner:   scan,
@@ -277,7 +300,7 @@ func Run(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine
 	if err := m.reload(); err != nil {
 		return err
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
 }
@@ -329,6 +352,10 @@ func (m *model) openProject(p domain.Project) {
 	m.projectResultsFilter = "important"
 	m.focusCol = 0
 	m.screen = "desk"
+	if m.guided {
+		m.screen = "overview"
+		return
+	}
 	if len(m.hostOrder) == 0 && len(m.networkTargets()) > 0 {
 		m.screen = "networks"
 	}
@@ -385,7 +412,7 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// case impossible to save. Every other action still treats empty
 		// input as "cancel this step".
 		isCred := strings.HasPrefix(action, "cred-")
-		if value == "" && !isCred && action != "ad-access-host" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
+		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
 			return m, nil
 		}
 		switch action {
@@ -691,6 +718,40 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.openProject(m.findProject(id))
 				m.message = "Проект создан."
 			}
+		case "guided-scope":
+			m.wizardScope = value
+			m.screen = "guided-scan"
+			m.wizardIndex = 1
+			return m, nil
+		case "ad-recon-dns", "ad-recon-domains", "ad-recon-budget":
+			options := m.adScanDNS
+			values := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' })
+			if action == "ad-recon-dns" {
+				options.Servers = values
+			}
+			if action == "ad-recon-domains" {
+				options.Domains = values
+			}
+			if action == "ad-recon-budget" {
+				budget, err := strconv.Atoi(value)
+				if err != nil {
+					m.message = "Лимит DNS-запросов: целое число 1–100000"
+					return m, nil
+				}
+				options.MaxQueries = budget
+				if budget < 1 {
+					m.message = "Лимит DNS-запросов: 1–100000"
+					return m, nil
+				}
+			}
+			normalized, err := adscan.ValidateDNSOptions(options)
+			if err != nil {
+				m.message = err.Error()
+				return m, nil
+			}
+			m.adScanDNS = normalized
+			m.message = "Параметры AD-разведки обновлены"
+			return m, nil
 		case "ad-cidr":
 			network, err := adscan.ValidatePrivateSubnet(value)
 			if err != nil {

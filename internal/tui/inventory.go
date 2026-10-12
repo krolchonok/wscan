@@ -543,7 +543,7 @@ func adFindingOnPort(f domain.Finding, s domain.Service) bool {
 	}
 	ldap := s.Port == 389 || s.Port == 636 || s.Port == 3268 || s.Port == 3269
 	switch f.TemplateID {
-	case "adscan-role-domain-controller":
+	case "adscan-role-domain-controller", "adscan-role-domain-controller-candidate":
 		return ldap || s.Port == 88 || s.Port == 464
 	case "adscan-role-global-catalog":
 		return s.Port == 3268 || s.Port == 3269

@@ -1,17 +1,16 @@
-package tui
+package app
 
 import (
 	"context"
 	"fmt"
 	"time"
-
 	"wscan/internal/discovery"
 	"wscan/internal/engine"
 )
 
-func (m model) runPTR(spec launchSpec) runFunc {
-	return func(ctx context.Context, emit progressReporter) (engine.Result, error) {
-		names, failures, err := discovery.ScanPTR(ctx, spec.hosts, spec.dnsServer, m.current.DiscoveryConcurrency, m.current.DiscoveryRPS, time.Duration(m.current.TimeoutSeconds)*time.Second, func(done, total int) { emit("PTR через "+spec.dnsServer, done, total) })
+func (m Worker) runPTR(spec Spec) RunFunc {
+	return func(ctx context.Context, emit Reporter) (engine.Result, error) {
+		names, failures, err := discovery.ScanPTR(ctx, spec.Hosts, spec.DNSServer, m.current.DiscoveryConcurrency, m.current.DiscoveryRPS, time.Duration(m.current.TimeoutSeconds)*time.Second, func(done, total int) { emit("PTR через "+spec.DNSServer, done, total) })
 		res := engine.Result{HostNames: names, Errors: failures}
 		for host, values := range names {
 			if len(values) > 0 {
@@ -20,7 +19,7 @@ func (m model) runPTR(spec launchSpec) runFunc {
 		}
 		// Persist discoveries even when the user has switched to another project.
 		if m.store != nil && err == nil {
-			if saveErr := m.store.SavePTRHostNames(ctx, m.current.ID, names, spec.dnsServer); saveErr != nil {
+			if saveErr := m.store.SavePTRHostNames(ctx, m.current.ID, names, spec.DNSServer); saveErr != nil {
 				return res, saveErr
 			}
 			for _, host := range res.LiveHosts {
@@ -35,3 +34,4 @@ func (m model) runPTR(spec launchSpec) runFunc {
 		return res, err
 	}
 }
+func (m Worker) RunPTR(spec Spec) RunFunc { return m.runPTR(spec) }

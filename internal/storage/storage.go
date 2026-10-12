@@ -19,6 +19,10 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS background_jobs(id INTEGER PRIMARY KEY,snapshot TEXT NOT NULL)`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS inventory_resets(project_id INTEGER NOT NULL,host TEXT NOT NULL,through_run INTEGER NOT NULL,aliases TEXT NOT NULL,PRIMARY KEY(project_id,host))`); err != nil {
 		db.Close()
 		return nil, err

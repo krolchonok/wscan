@@ -114,6 +114,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case smbBrowserDone:
 		return m.applySMBBrowserDone(x)
 	case jobTick:
+		m.syncSharedJobs()
 		dnsCmd := m.resolveHostNamesCmd()
 		return m, tea.Batch(tickJobs(), dnsCmd)
 	case hostNamesDone:
@@ -399,6 +400,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSMBBrowser(key)
 		case "project-delete-confirm":
 			return m.updateProjectDelete(key)
+		case "overview":
+			return m.updateOverview(key)
+		case "guided-scan":
+			return m.updateGuidedScan(key)
 		case "projects":
 			return m.updateProjects(key)
 		case "ad-scan":

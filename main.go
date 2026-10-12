@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"wscan/internal/app"
 	"wscan/internal/catalog"
 	"wscan/internal/discovery"
 	"wscan/internal/domain"
@@ -71,6 +72,13 @@ func main() {
 		fatalIf(runLibrary(appDir, os.Args[2:]))
 		return
 	}
+	webEnabled, tuiWeb, webAddress, webErr := webMode(os.Args[1:])
+	fatalIf(webErr)
+	if len(os.Args) == 1 || webEnabled || os.Args[1] == "scan" {
+		unlock, err := app.OwnerLock(appDir)
+		fatalIf(err)
+		defer unlock()
+	}
 	store, err := storage.Open(filepath.Join(appDir, "wscan.db"))
 	fatalIf(err)
 	defer store.Close()
@@ -91,6 +99,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "export" {
 		fatalIf(runExport(context.Background(), store, appDir, os.Args[2:]))
+		return
+	}
+	if webEnabled {
+		fatalIf(runWeb(store, cat, scan, appDir, tuiWeb, webAddress))
 		return
 	}
 	fatalIf(tui.Run(context.Background(), store, cat, scan, appDir))

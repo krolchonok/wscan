@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 
 	"wscan/internal/domain"
@@ -21,6 +22,10 @@ func Export(path, format string, data Data) error {
 		return err
 	}
 	defer f.Close()
+	return Write(f, format, data)
+}
+
+func Write(f io.Writer, format string, data Data) error {
 	switch format {
 	case "json":
 		e := json.NewEncoder(f)

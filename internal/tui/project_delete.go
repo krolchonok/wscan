@@ -6,6 +6,9 @@ import (
 )
 
 func (m model) projectHasActiveJobs(id int64) bool {
+	if m.shared != nil && m.shared.Jobs.Active(id) {
+		return true
+	}
 	for _, j := range m.jobs {
 		if j.projectID == id && j.active() {
 			return true

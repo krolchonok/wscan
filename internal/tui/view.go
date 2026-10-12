@@ -119,6 +119,10 @@ func (m model) View() string {
 		body = m.viewSMBBrowser(w)
 	case "project-delete-confirm":
 		body = m.viewProjectDelete(w)
+	case "overview":
+		body = m.viewOverview(w)
+	case "guided-scan":
+		body = m.viewGuidedScan(w)
 	case "projects":
 		body = m.viewProjects(w)
 	case "ad-scan":
@@ -315,6 +319,10 @@ func (m model) footer() string {
 		return "↑↓ выбор · Enter открыть · ← назад · d скачать · e CSV · a null/guest · c учётка · f конфигурации · r обновить · Esc выход/отмена"
 	case "project-delete-confirm":
 		return "Enter удалить проект · Esc отмена"
+	case "overview":
+		return "↑↓ выбрать действие · Enter открыть · s начать проверку · 0 обзор · Esc проекты"
+	case "guided-scan":
+		return "↑↓ выбрать · Enter подтвердить шаг · Esc назад"
 	case "projects":
 		return "↑/↓ проект   Enter открыть   p общие настройки   n создать   Del удалить   d AD-аудит → новый проект   g задачи   q выход"
 	case "ad-scan":
@@ -1065,7 +1073,7 @@ func (m model) viewRepair(w int) string {
 func (m model) viewInput(w int) string {
 	label := map[string]string{"select-host-port": "Открытый порт: 445, 443/tcp или 53/udp", "ad-cidr": "Частная IPv4-подсеть CIDR (например 192.168.1.0/24)", "ptr-server": "IP DNS-сервера (например 10.0.0.10 или 10.0.0.10:53)", "mysql-port": "TCP-порт MySQL", "mysql-user": "Пользователь MySQL (Enter — пустое имя)", "mysql-database": "База MySQL (Enter — без выбранной базы)", "mysql-query": "SQL чтение или :rows users 100", "ssh-dict-user": "SSH-пользователь", "ssh-dict-users": "Файл пользователей (Enter — один пользователь)", "ssh-dict-passwords": "Файл словаря паролей", "ssh-dict-port": "TCP-порт SSH", "ssh-dict-rps": "SSH: попыток в секунду (0 — без ограничения скорости)", "ssh-dict-workers": "SSH: потоки 1–64", "ssh-dict-delay": "Пауза между попытками, мс: 0–60000", "web-wordlist-filter": "Поиск словаря по имени (Enter — все)", "web-discovery-url": "HTTP/HTTPS URL", "web-discovery-wordlist": "Путь к словарю (Enter — встроенный)", "web-discovery-extensions": "Расширения через запятую: php,html,txt", "web-discovery-vhost": "Virtual host (Enter — очистить)", "web-discovery-statuses": "HTTP-статусы через запятую (Enter — стандартные)", "web-discovery-sizes": "Исключить размеры ответов, байт, через запятую", "web-discovery-rps": "Запросов в секунду (0 — до 100)", "web-discovery-workers": "Параллельность: 1–64", "pg-port": "TCP-порт PostgreSQL", "pg-user": "Имя роли PostgreSQL для входа без пароля", "pg-database": "База PostgreSQL", "pg-query": "SQL только чтение или :rows public.table 100", "cred-username": "Имя пользователя", "cred-domain": "Домен (Enter — пропустить)", "cred-secret": "Пароль", "cred-notes": "Заметка (Enter — пропустить)", "lfi-url": "URL выбранного сервиса", "lfi-parameter": "Query-параметр для проверки LFI", "lfi-vhost": "Virtual host (Enter — очистить)", "kyocera-port": "TCP-порт сервиса Kyocera (обычно 9091)", "kyocera-wait": "Пауза перед запросом книги, сек (0–60)", "ftp-port": "TCP-порт FTP-сервера", "ftp-path": "Путь FTP-каталога", "smb-port": "TCP-порт выбранного SMB-сервиса", "module-share": "Имя SMB-шары для поиска конфигураций", "mssql-nse": "NSE: ms-sql-info / ms-sql-hasdbaccess / ms-sql-tables", "mssql-port": "TCP-порт MSSQL", "mssql-columns": "Таблица (schema.table)", "mssql-rows": "Таблица и число строк (dbo.users 100; максимум 500)", "mssql-count": "Таблица (schema.table)", "mssql-transfer-local": "Локальный файл для передачи", "mssql-transfer-address": "Наш IP, доступный Windows (VPN/IP интерфейса)", "mssql-transfer-port": "Порт Python HTTP-сервера", "mssql-transfer-remote": "Путь назначения на Windows (%TEMP%\\winPEAS.exe)", "mssql-winpeas": "Путь WinPEAS.exe на Windows", "mssql-report": "Путь текстового отчёта на Windows", "mssql-command": "Команда ОС через xp_cmdshell", "mssql-query": "SQL-запрос (может менять данные и настройки)", "mssql-database": "Имя базы MSSQL", "winrm-port": "TCP-порт WinRM", "winrm-path": "Каталог Windows (например C:\\Users)", "winrm-shell-command": "Команда в PowerShell-сессии", "winrm-command": "Одна команда PowerShell", "bulk-port": "Один порт на выбранных хостах (445, 443/tcp, 53/udp)", "new-project": "Название проекта", "add-target": "IP, имя хоста или URL", "add-network": "Подсеть CIDR (например 10.0.0.0/24)", "project-results-search": "Поиск результатов: хост, порт, CVE, название или текст", "search": "Фильтр шаблонов", "disc-ports": "Порты (напр. 22,80,443,8000-8100)"}[m.inputAction]
 	if label == "" {
-		label = map[string]string{"ad-bloodhound-limit": "BloodHound: лимит объектов и членов одной группы (1–50000)", "ad-access-host": "Хост контроллера домена (IP/DNS)", "ad-access-domain": "DNS-имя домена", "ad-coerce-callback": "Локальный IPv4 приёмника, доступный машинам (например адрес VPN)"}[m.inputAction]
+		label = map[string]string{"guided-scope": "Область проверки: CIDR, IP или URL через пробел", "ad-recon-dns": "Дополнительные DNS: IP или IP:порт через запятую (Enter — очистить)", "ad-recon-domains": "Дополнительные DNS-имена доменов через запятую (Enter — очистить)", "ad-recon-budget": "Лимит DNS SRV-запросов: 1–100000 (по умолчанию 1024)", "ad-bloodhound-limit": "BloodHound: лимит объектов и членов одной группы (1–50000)", "ad-access-host": "Хост контроллера домена (IP/DNS)", "ad-access-domain": "DNS-имя домена", "ad-coerce-callback": "Локальный IPv4 приёмника, доступный машинам (например адрес VPN)"}[m.inputAction]
 	}
 	if m.inputAction == "setting-value" {
 		label = settingLabels[m.settingsIndex]

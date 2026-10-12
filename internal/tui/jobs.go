@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"wscan/internal/adscan"
+	"wscan/internal/app"
 	"wscan/internal/discovery"
 	"wscan/internal/domain"
 	"wscan/internal/engine"
@@ -40,32 +41,34 @@ const (
 // mutated inside Update (single threaded); the worker goroutine talks back
 // through the shared jobEvents channel, never by touching the struct directly.
 type job struct {
-	id        int
-	projectID int64
-	kind      string
-	label     string
-	targets   []string
-	status    string
-	stage     string
-	completed int
-	total     int
-	runID     int64
-	result    *engine.Result
-	adResult  *adscan.Result
-	findings  int
-	errText   string
-	started   time.Time
-	ended     time.Time
-	seen      bool // results already opened by the user
-	cancel    context.CancelFunc
-	scope     string
-	service   *domain.Service
-	checks    []string
-	options   []string
-	journal   []string
-	logPath   string
-	logError  string
-	lastLog   time.Time
+	sharedRevision uint64
+	sharedTerminal bool
+	id             int
+	projectID      int64
+	kind           string
+	label          string
+	targets        []string
+	status         string
+	stage          string
+	completed      int
+	total          int
+	runID          int64
+	result         *engine.Result
+	adResult       *adscan.Result
+	findings       int
+	errText        string
+	started        time.Time
+	ended          time.Time
+	seen           bool // results already opened by the user
+	cancel         context.CancelFunc
+	scope          string
+	service        *domain.Service
+	checks         []string
+	options        []string
+	journal        []string
+	logPath        string
+	logError       string
+	lastLog        time.Time
 }
 
 func (j *job) addLog(message string) {
@@ -93,6 +96,9 @@ func (j *job) addLog(message string) {
 }
 
 func (m model) initJobLog(j *job) {
+	if m.shared != nil {
+		m.shared.Jobs.Metadata(j.id, j.scope, j.checks, j.options)
+	}
 	if m.appDir != "" {
 		dir := filepath.Join(m.appDir, "logs")
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -168,10 +174,10 @@ type jobEvent struct {
 }
 
 // Counts describe progress within the current phase, not an estimated total.
-type progressReporter func(stage string, counts ...int)
+type progressReporter = app.Reporter
 
 // runFunc is the actual work of a job.
-type runFunc func(ctx context.Context, emit progressReporter) (engine.Result, error)
+type runFunc = app.RunFunc
 
 // waitForJob blocks on the shared channel and turns the next event into a
 // tea.Msg. Update re-issues it after every event to keep listening.
@@ -183,6 +189,22 @@ func waitForJob(ch chan jobEvent) tea.Cmd {
 // model (jobs slice, counter) and is always called from Update on the value
 // receiver, so the returned model must be propagated by the caller.
 func (m *model) launch(kind, label string, targets []string, fn runFunc) {
+	if m.shared != nil {
+		projectID := m.current.ID
+		snapshot, err := m.shared.Jobs.Start(app.JobRequest{ProjectID: projectID, Kind: kind, Label: label, Targets: targets, Scope: strings.Join(targets, ", "), Source: m.jobSource()}, "", func(ctx context.Context, emit app.Reporter) (app.Outcome, error) {
+			res, err := fn(ctx, emit)
+			return app.Outcome{Result: res, ProjectID: projectID}, err
+		})
+		if err != nil {
+			m.jobSeq++
+			m.jobs = append(m.jobs, &job{id: m.jobSeq, projectID: projectID, kind: kind, label: label, status: statusFailed, errText: err.Error(), started: time.Now(), ended: time.Now()})
+			m.message = err.Error()
+			return
+		}
+		m.addSharedJob(snapshot)
+		return
+	}
+
 	m.jobSeq++
 	id := m.jobSeq
 	parent := m.ctx
@@ -409,6 +431,12 @@ func (m *model) clearFinishedJobs() {
 	kept := m.jobs[:0]
 	for _, j := range m.jobs {
 		if j.status != statusRunning {
+			if m.shared != nil {
+				if m.hiddenSharedJobs == nil {
+					m.hiddenSharedJobs = map[int]bool{}
+				}
+				m.hiddenSharedJobs[j.id] = true
+			}
 			continue
 		}
 		kept = append(kept, j)

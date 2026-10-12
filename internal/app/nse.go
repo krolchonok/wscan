@@ -1,4 +1,4 @@
-package tui
+package app
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 
 // nseRunner builds the NSE runner config from the current project,
 // using the native Lua engine with explicit ports and network timeout.
-func (m model) nseRunner() *nse.Runner {
+func (m Worker) nseRunner() *nse.Runner {
 	timeout := time.Duration(m.current.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -81,7 +81,7 @@ func nseFinding(host string, r nse.ScriptResult) domain.Finding {
 
 // runNmapScriptsOn runs the chosen NSE scripts against one host's services via
 // the native NSE engine and returns findings + errors.
-func (m model) runNmapScriptsOn(ctx context.Context, runner *nse.Runner, displayHost string, hi nse.HostInfo, ports []nse.PortInfo, scriptIDs []string, emit progressReporter) ([]domain.Finding, []string) {
+func (m Worker) runNmapScriptsOn(ctx context.Context, runner *nse.Runner, displayHost string, hi nse.HostInfo, ports []nse.PortInfo, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
 	var findings []domain.Finding
 	var errs []string
 	for i, id := range scriptIDs {
@@ -203,7 +203,7 @@ func nseRequiresOptInScript(entries []catalog.Entry, id string) bool {
 
 // runNmapScripts runs the scripts against the inventory's known services for
 // the given hosts (use after a separate Discover run has populated them).
-func (m model) runNmapScripts(ctx context.Context, hosts, scriptIDs []string, emit progressReporter) ([]domain.Finding, []string) {
+func (m Worker) runNmapScripts(ctx context.Context, hosts, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
 	var services []domain.Service
 	for _, host := range hosts {
 		services = append(services, m.servicesFor(host)...)
@@ -214,7 +214,7 @@ func (m model) runNmapScripts(ctx context.Context, hosts, scriptIDs []string, em
 // runNmapScriptsForServices groups an explicit service slice by host bucket and
 // runs the scripts against each. Used by the full scan, where freshly
 // discovered services are not yet in the inventory.
-func (m model) runNmapScriptsForServices(ctx context.Context, services []domain.Service, scriptIDs []string, emit progressReporter) ([]domain.Finding, []string) {
+func (m Worker) runNmapScriptsForServices(ctx context.Context, services []domain.Service, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
 	runner := m.nseRunner()
 	groups := map[string][]domain.Service{}
 	displays := map[string]string{}
@@ -239,4 +239,32 @@ func (m model) runNmapScriptsForServices(ctx context.Context, services []domain.
 		errs = append(errs, e...)
 	}
 	return findings, errs
+}
+
+func NSEFinding(host string, r nse.ScriptResult) domain.Finding { return nseFinding(host, r) }
+
+func HostNameIfDomain(host string) string { return hostNameIfDomain(host) }
+
+func PortInfos(services []domain.Service) []nse.PortInfo { return portInfos(services) }
+
+func NSEDenialOfServiceScript(entries []catalog.Entry, id string) bool {
+	return nseDenialOfServiceScript(entries, id)
+}
+
+func NSERequiresOptInScript(entries []catalog.Entry, id string) bool {
+	return nseRequiresOptInScript(entries, id)
+}
+
+func (m Worker) NseRunner() *nse.Runner { return m.nseRunner() }
+
+func (m Worker) RunNmapScriptsOn(ctx context.Context, runner *nse.Runner, displayHost string, hi nse.HostInfo, ports []nse.PortInfo, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
+	return m.runNmapScriptsOn(ctx, runner, displayHost, hi, ports, scriptIDs, emit)
+}
+
+func (m Worker) RunNmapScripts(ctx context.Context, hosts, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
+	return m.runNmapScripts(ctx, hosts, scriptIDs, emit)
+}
+
+func (m Worker) RunNmapScriptsForServices(ctx context.Context, services []domain.Service, scriptIDs []string, emit Reporter) ([]domain.Finding, []string) {
+	return m.runNmapScriptsForServices(ctx, services, scriptIDs, emit)
 }
