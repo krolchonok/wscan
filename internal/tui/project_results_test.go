@@ -27,6 +27,35 @@ func projectResultsFixture() model {
 		"alias":    {findings: []domain.Finding{fresh}},
 	}}
 }
+
+func TestADResultsDisplayHostInsteadOfEntireScanScope(t *testing.T) {
+	scope := "10.0.0.0/24 10.0.0.1 10.0.0.16 10.0.0.133"
+	for _, test := range []struct {
+		matched, template, want string
+	}{
+		{"10.0.0.133", "adscan-role-windows-host", "10.0.0.133"},
+		{"10.0.0.16", "adscan-smb-anonymous-access", "10.0.0.16"},
+		{scope, "adscan-recon-summary", "Область: 10.0.0.0/24"},
+		{"", "adscan-recon-summary", "Область: 10.0.0.0/24"},
+		{"nse://10.0.0.123", "nmap/smb-protocols", "nse://10.0.0.123"},
+		{"nse://10.0.0.10:3389/rdp-ntlm-info", "nmap/rdp-ntlm-info", "10.0.0.10:3389"},
+	} {
+		f := domain.Finding{Target: scope, MatchedAt: test.matched, TemplateID: test.template, Name: "Результат", Severity: "info"}
+		if got := projectResultLocation(f); got != test.want {
+			t.Fatalf("%s: location %q, want %q", test.template, got, test.want)
+		}
+		if strings.Contains(projectResultLabel(f), scope) {
+			t.Fatal("row repeats the entire scan scope")
+		}
+		m := model{findingDetail: &f}
+		if strings.Contains(strings.Join(m.projectResultDetailLines(300), "\n"), scope) {
+			t.Fatal("overview repeats the entire scan scope")
+		}
+		if f.Target != scope {
+			t.Fatal("display changed saved finding scope")
+		}
+	}
+}
 func TestProjectResultsAcrossNetworksAndDedup(t *testing.T) {
 	m := projectResultsFixture()
 	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("5")})

@@ -10,7 +10,7 @@ func (m model) helpLines(w int) []string {
 	context := m
 	context.screen = m.helpReturn
 	body := screenTitle(m.helpReturn) + "\n\nНА ЭТОМ ЭКРАНЕ\n" + strings.ReplaceAll(strings.ReplaceAll(context.footer(), "   ", "\n"), " · ", "\n")
-	body += "\n\nОБЩЕЕ\n1–5 — рабочие разделы из списков\nEnter — открыть / выполнить\nEsc — назад / отменить\ng — задачи\n? — помощь для текущего экрана\nCtrl+C — завершить приложение"
+	body += "\n\nОБЩЕЕ\n0 — разведка сети\n1–5 — рабочие разделы из списков\nEnter — открыть / выполнить\nEsc — назад / отменить\ng — задачи\n? — помощь для текущего экрана\nCtrl+C — завершить приложение"
 	return strings.Split(ansi.Wrap(ansi.Strip(body), max(1, w), ""), "\n")
 }
 func (m model) updateHelp(key string) (tea.Model, tea.Cmd) {

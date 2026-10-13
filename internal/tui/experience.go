@@ -317,12 +317,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == "web-connect" {
 			return m.updateWebConnect(key)
 		}
-		if key == "w" && m.webURL != "" && (m.screen == "projects" || m.screen == "overview") {
+		if key == "w" && m.webURL != "" && (m.screen == "projects" || m.screen == "overview" || m.screen == "recon") {
 			m.screen = "web-connect"
 			return m, nil
 		}
 		if m.screen == "project-results" && m.resultDeleteConfirm {
 			return m.confirmResultDelete(key)
+		}
+		if next, cmd, ok := m.selectSidebarShortcut(key); ok {
+			return next, cmd
+		}
+		if m.hasSidebar() && m.screen != "recon" {
+			if next, cmd, ok := m.updateSidebar(key); ok {
+				return next, cmd
+			}
 		}
 		if next, ok := m.navigateWorkspace(key); ok {
 			return next, nil
@@ -410,6 +418,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSMBBrowser(key)
 		case "project-delete-confirm":
 			return m.updateProjectDelete(key)
+		case "checks-menu":
+			return m.updateChecksMenu(key)
+		case "ad-menu":
+			return m.updateADMenu(key)
+		case "recon-host-menu":
+			return m.updateReconHostMenu(key)
+		case "recon":
+			return m.updateRecon(key)
 		case "overview":
 			return m.updateOverview(key)
 		case "guided-scan":
@@ -526,6 +542,15 @@ func (m model) updateProjects(key string) (tea.Model, tea.Cmd) {
 // --- desk ------------------------------------------------------------
 
 func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		if m.sidebarEnabled {
+			m.reconMenuFocus = true
+			return m, nil
+		}
+		m.openHostScope("")
+		m.screen = "recon"
+		return m, nil
+	}
 	if key == "f" {
 		m.actionIndex = 0
 		m.screen = "host-selection"
@@ -575,7 +600,9 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 		switch m.focusCol {
 		case 0:
 			if len(m.hostOrder) > 0 {
-				m.rememberSelectedPort(services)
+				if m.preferredPort == 0 {
+					m.rememberSelectedPort(services)
+				}
 				if m.hostIndex < 0 {
 					m.hostIndex = len(m.hostOrder) - 1
 				} else {
@@ -585,9 +612,9 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 				m.findingIndex = 0
 			}
 		case 1:
-			m.preferredPort, m.preferredProtocol = 0, ""
 			if m.serviceIndex > -1 {
 				m.serviceIndex--
+				m.rememberSelectedPort(services)
 				m.findingIndex = 0
 			}
 		case 2:
@@ -599,7 +626,9 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 		switch m.focusCol {
 		case 0:
 			if len(m.hostOrder) > 0 {
-				m.rememberSelectedPort(services)
+				if m.preferredPort == 0 {
+					m.rememberSelectedPort(services)
+				}
 				if m.hostIndex+1 >= len(m.hostOrder) {
 					m.hostIndex = -1
 				} else {
@@ -609,12 +638,13 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 				m.findingIndex = 0
 			}
 		case 1:
-			m.preferredPort, m.preferredProtocol = 0, ""
 			if m.serviceIndex < 0 && len(services) > 0 {
 				m.serviceIndex = 0
+				m.rememberSelectedPort(services)
 				m.findingIndex = 0
 			} else if m.serviceIndex+1 < len(services) {
 				m.serviceIndex++
+				m.rememberSelectedPort(services)
 				m.findingIndex = 0
 			}
 		case 2:
@@ -976,6 +1006,7 @@ func (m model) buildSpec(row actionRow) (launchSpec, string) {
 }
 
 func (m *model) openDiscOptions() {
+	m.discReturn = m.screen
 	m.discProject = m.current
 	m.discOnlyKnown = false
 	m.discHosts = append([]string(nil), m.actionHosts...)
@@ -1015,13 +1046,16 @@ func (m model) updateDiscOptions(key string) (tea.Model, tea.Cmd) {
 	case "home", "end":
 		m.discOptIndex = 4
 	case "esc":
-		m.screen = "action-menu"
+		m.screen = m.discReturn
+		if m.screen == "" {
+			m.screen = "action-menu"
+		}
 	case "up", "k":
 		if m.discOptIndex > 0 {
 			m.discOptIndex--
 		}
 	case "down", "j":
-		if m.discOptIndex < 9 {
+		if m.discOptIndex < 10 {
 			m.discOptIndex++
 		}
 	case " ", "space":
@@ -1057,6 +1091,9 @@ func (m model) updateDiscOptions(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "enter":
+		if m.discOptIndex == 10 {
+			return m.updateDiscOptions("esc")
+		}
 		spec, errMsg := m.buildDiscoverSpec()
 		if errMsg != "" {
 			m.message = errMsg
@@ -1110,6 +1147,7 @@ func (m model) updateJobs(key string) (tea.Model, tea.Cmd) {
 		if m.jobIndex < len(rows) {
 			m.logOffset = -1
 			m.jobDetailRaw = false
+			m.jobDetailErrors = false
 			m.screen = "job-details"
 		}
 	case "e":

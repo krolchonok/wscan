@@ -39,11 +39,9 @@ func TestCoercionMenuOpensHostSetup(t *testing.T) {
 	m.screen = "desk"
 	m.hostOrder = []string{"127.0.0.1"}
 	m.inventory = map[string]*hostInfo{"127.0.0.1": {services: []domain.Service{{Host: "127.0.0.1", Port: 445, Protocol: "tcp", State: "open"}}}}
-	m.openInteractionMenu()
-	if m.interactionIndex != interactionCoerceIndex {
-		t.Fatal("SMB host must highlight Coerce entry")
-	}
-	next, cmd := m.updateInteractionMenu("enter")
+	m.screen = "ad-menu"
+	m.adMenuIndex = 2
+	next, cmd := m.updateADMenu("enter")
 	m = next.(model)
 	if m.screen != "coerce-setup" || m.adAccessHost != "127.0.0.1" || cmd == nil || len(m.jobs) != 0 {
 		t.Fatal("menu must open host setup without starting Coerce or receiver")
@@ -57,7 +55,7 @@ func TestCoercionMenuOpensHostSetup(t *testing.T) {
 		t.Fatal("receiver startup not offered")
 	}
 	next, _ = m.updateCoercionSetup("esc")
-	if next.(model).screen != "interaction-menu" {
+	if next.(model).screen != "ad-menu" {
 		t.Fatal("lost return menu")
 	}
 }
@@ -120,14 +118,15 @@ func TestCoercionPortRequiresConfirmation(t *testing.T) {
 
 func TestADAccessMenuKeepsSelectedCoercionHost(t *testing.T) {
 	m := newTestModelForSettings(t)
-	m.screen = "interaction-menu"
-	m.interactionIndex = 15
-	m.smbBrowser.host = "127.0.0.1"
+	m.screen = "ad-menu"
+	m.adMenuIndex = 2
+	m.hostOrder = []string{"127.0.0.1"}
+	m.hostIndex = 0
 	m.inventory = map[string]*hostInfo{
 		"127.0.0.1": {services: []domain.Service{{Host: "127.0.0.1", Port: 445, Protocol: "tcp", State: "open"}}},
 		"192.0.2.2": {services: []domain.Service{{Host: "192.0.2.2", Port: 445, Protocol: "tcp", State: "open"}}},
 	}
-	next, cmd := m.updateInteractionMenu("enter")
+	next, cmd := m.updateADMenu("enter")
 	m = next.(model)
 	if got := m.coercionTargets(); !reflect.DeepEqual(got, []string{"127.0.0.1"}) {
 		t.Fatalf("host menu widened targets: %v", got)
@@ -140,7 +139,7 @@ func TestADAccessMenuKeepsSelectedCoercionHost(t *testing.T) {
 	if m.adCoerceCallback != "127.0.0.1" {
 		t.Fatalf("receiver: %s", m.adCoerceCallback)
 	}
-	if !strings.Contains(m.viewADAccess(100), "только 127.0.0.1") {
+	if !strings.Contains(m.viewCoercionSetup(100), "Цель: 127.0.0.1") {
 		t.Fatal("target scope unclear")
 	}
 }

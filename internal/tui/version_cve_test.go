@@ -12,15 +12,15 @@ import (
 )
 
 func TestVersionCVEMenuNeedsNoSelectedHost(t *testing.T) {
-	m := model{current: domain.Project{ID: 1}, interactionIndex: 12, screen: "interaction-menu"}
-	got, _ := m.updateInteractionMenu("enter")
+	m := model{current: domain.Project{ID: 1}, checkMenuIndex: 1, screen: "checks-menu"}
+	got, _ := m.updateChecksMenu("enter")
 	m = got.(model)
 	if !strings.Contains(m.message, "Нет сохранённых сервисов") {
 		t.Fatal(m.message)
 	}
 	m.width = 110
 	m.height = 24
-	if !strings.Contains(m.viewInteractionMenu(100), "сохранённые версии") {
+	if !strings.Contains(m.viewChecksMenu(100), "сохранённым версиям") {
 		t.Fatal("selected offline action is not visible")
 	}
 }
@@ -43,8 +43,8 @@ func TestVersionCVEProjectPersistence(t *testing.T) {
 	}
 	a := domain.Service{Host: "invalid.invalid", Port: 80, Protocol: "tcp", Product: "nginx", Version: "1.24"}
 	b := domain.Service{Host: "192.0.2.2", Port: 22, Protocol: "tcp"}
-	m := model{ctx: ctx, current: domain.Project{ID: id}, store: store, cat: catalog.NewWithLibrary(dir, dir), inventory: map[string]*hostInfo{"alias": {services: []domain.Service{a}}, a.Host: {services: []domain.Service{a}}, b.Host: {services: []domain.Service{b}}}, jobEvents: make(chan jobEvent, 16), interactionIndex: 12}
-	got, _ := m.updateInteractionMenu("enter")
+	m := model{ctx: ctx, current: domain.Project{ID: id}, store: store, cat: catalog.NewWithLibrary(dir, dir), inventory: map[string]*hostInfo{"alias": {services: []domain.Service{a}}, a.Host: {services: []domain.Service{a}}, b.Host: {services: []domain.Service{b}}}, jobEvents: make(chan jobEvent, 16), checkMenuIndex: 1}
+	got, _ := m.updateChecksMenu("enter")
 	m = got.(model)
 	if m.screen != "jobs" || len(m.jobs) != 1 || m.jobs[0].kind != "version-cve" {
 		t.Fatal("offline job was not launched")

@@ -11,9 +11,13 @@ import (
 	"wscan/internal/storage"
 )
 
-func waitJob(t *testing.T, m *Manager, id int) Job {
+func waitJob(t *testing.T, m *Manager, id int, limit ...time.Duration) Job {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	timeout := 5 * time.Second
+	if len(limit) > 0 {
+		timeout = limit[0]
+	}
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		j, ok := m.Get(id)
 		if ok && j.Status != "running" && j.Status != "cancelling" {
@@ -23,6 +27,43 @@ func waitJob(t *testing.T, m *Manager, id int) Job {
 	}
 	t.Fatal("job did not finish")
 	return Job{}
+}
+
+func TestJobCheckErrorsPersistAfterRestartAndSnapshotsDoNotAlias(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m, err := NewManager(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := m.Start(JobRequest{Label: "errors"}, "", func(context.Context, Reporter) (Outcome, error) {
+		return Outcome{Result: engine.Result{Errors: []string{"first\nstack trace", "second", "third"}}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitJob(t, m, j.ID)
+	if len(finished.CheckErrors) != 3 {
+		t.Fatal("errors not captured in snapshot")
+	}
+	finished.CheckErrors[0] = "modified"
+	unchanged, _ := m.Get(j.ID)
+	if unchanged.CheckErrors[0] != "first\nstack trace" {
+		t.Fatal("caller changed stored errors through snapshot")
+	}
+	m.Close()
+	restored, err := NewManager(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	got, _ := restored.Get(j.ID)
+	if len(got.CheckErrors) != 3 || got.CheckErrors[0] != "first\nstack trace" {
+		t.Fatalf("errors lost after restart: %+v", got)
+	}
 }
 func TestManagerCompletionCancellationAndIdempotency(t *testing.T) {
 	m, err := NewManager(context.Background(), nil)

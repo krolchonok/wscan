@@ -47,6 +47,7 @@ type Job struct {
 	RunID            int64      `json:"run_id"`
 	Findings         int        `json:"findings"`
 	Error            string     `json:"error,omitempty"`
+	CheckErrors      []string   `json:"check_errors"`
 	PersistenceError string     `json:"persistence_error,omitempty"`
 	Started          time.Time  `json:"started"`
 	Ended            time.Time  `json:"ended,omitempty"`
@@ -162,6 +163,9 @@ func cloneRequest(r JobRequest) JobRequest {
 func cloneJob(j Job) Job {
 	j.JobRequest = cloneRequest(j.JobRequest)
 	j.Journal = append([]JobEvent(nil), j.Journal...)
+	if j.CheckErrors != nil {
+		j.CheckErrors = append([]string{}, j.CheckErrors...)
+	}
 	return j
 }
 func (m *Manager) eventLocked(s *jobState, msg string) {
@@ -240,6 +244,7 @@ func (m *Manager) run(ctx context.Context, id int, execute Executor) {
 	s.job.Outcome = &outcome
 	s.job.RunID = outcome.Result.RunID
 	s.job.Findings = len(outcome.Result.Findings)
+	s.job.CheckErrors = append([]string{}, outcome.Result.Errors...)
 	s.job.Ended = time.Now()
 	if outcome.ProjectID != 0 {
 		s.job.ProjectID = outcome.ProjectID

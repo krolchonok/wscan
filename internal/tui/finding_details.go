@@ -15,13 +15,13 @@ func (m model) deskFindings() []domain.Finding {
 	if m.screen == "project-results" {
 		return m.filteredProjectFindings()
 	}
-	if m.selectedPortMissing() {
-		return nil
-	}
 	host := m.currentHost()
 	services := m.servicesFor(host)
 	if m.serviceIndex >= 0 && m.serviceIndex < len(services) {
 		return m.findingsForService(host, services[m.serviceIndex])
+	}
+	if m.selectedPortMissing() {
+		return nil
 	}
 	return m.findingsFor(host)
 }

@@ -125,14 +125,6 @@ func (m *model) openInteractionMenu() {
 			}
 		}
 	}
-	if m.focusCol == 0 {
-		for _, s := range m.servicesFor(host) {
-			if s.Port == 445 && (s.Protocol == "tcp" || s.Protocol == "") && (s.State == "open" || s.State == "") {
-				m.interactionIndex = interactionCoerceIndex
-				break
-			}
-		}
-	}
 	m.screen = "interaction-menu"
 	m.message = ""
 }
@@ -147,38 +139,15 @@ func (m model) updateInteractionMenu(key string) (tea.Model, tea.Cmd) {
 	case "home":
 		m.interactionIndex = 0
 	case "end":
-		m.interactionIndex = interactionMenuCount - 1
+		m.interactionIndex = interactionToolIndices()[len(interactionToolIndices())-1]
 	case "h":
 		m.interactionHostIndex = 0
 		m.screen = "interaction-targets"
 	case "up", "k":
-		m.interactionIndex = (m.interactionIndex + interactionMenuCount - 1) % interactionMenuCount
+		m.interactionIndex = nextInteractionTool(m.interactionIndex, -1)
 	case "down", "j", "tab":
-		m.interactionIndex = (m.interactionIndex + 1) % interactionMenuCount
+		m.interactionIndex = nextInteractionTool(m.interactionIndex, 1)
 	case "enter":
-		if m.interactionIndex == interactionCoerceIndex {
-			return m.openHostCoercion()
-		}
-		if m.interactionIndex == 15 {
-			m.openADAccess()
-			m.adAccessHost = m.smbBrowser.host
-			if m.adAccessHost != "" && (m.adCoerceCallback == "" || m.coerceCallbackAuto) {
-				m.adCoerceCallback = ""
-				m.coerceCallbackAuto = true
-				return m, m.coerceRouteCmd(m.adAccessHost)
-			}
-			return m, nil
-		}
-		if m.interactionIndex == 14 {
-			m.openADScan()
-			return m, nil
-		}
-		if m.interactionIndex == 13 {
-			return m.openNSEVuln()
-		}
-		if m.interactionIndex == 12 {
-			return m.openVersionCVE()
-		}
 		if m.interactionIndex == 7 {
 			return m.openWebDiscovery()
 		}
@@ -483,18 +452,20 @@ func (m model) viewInteractionMenu(w int) string {
 		"Web SQLi — проверка форм на SQL-инъекции",
 		"Web Upload — проверка загрузки PHP-файлов (RCE)",
 		fmt.Sprintf("Kyocera :%d — выгрузка адресной книги без аутентификации", m.kyoceraBook.target.Port),
-		"CVE — офлайн: сверить сохранённые версии (весь проект)",
-		"NSE --script vuln — активные проверки (весь проект)",
-		"AD Scan — инвентаризация сети в текущий проект…",
-		"AD — учётки, Kerberos, SYSVOL и coercion…",
-		"Coerce / Responder — выбранная машина…",
 	}
-	lo, hi := windowRange(m.interactionIndex, len(rows), max(1, m.panelRows()-8))
+	indices := interactionToolIndices()
+	selected := 0
+	for i, index := range indices {
+		if index == m.interactionIndex {
+			selected = i
+		}
+	}
+	lo, hi := windowRange(selected, len(indices), max(1, m.panelRows()-8))
 	body += moreLine(lo, true)
 	for i := lo; i < hi; i++ {
-		body += renderListRow(rows[i], i == m.interactionIndex, w)
+		body += renderListRow(rows[indices[i]], indices[i] == m.interactionIndex, w)
 	}
-	body += moreLine(len(rows)-hi, false)
+	body += moreLine(len(indices)-hi, false)
 	return m.renderPanel(w, body)
 }
 
@@ -592,14 +563,19 @@ func smbRightsLabel(entry js.SMBEntry) string {
 	if entry.Write != nil && *entry.Write {
 		permissions = append(permissions, "WRITE")
 	}
-	if entry.Read == nil {
-		permissions = append(permissions, "READ ?")
-	}
-	if entry.Write == nil {
-		permissions = append(permissions, "WRITE ?")
-	}
 	if len(permissions) == 0 {
-		return "нет доступа"
+		switch {
+		case entry.Read != nil && entry.Write != nil:
+			return "нет доступа"
+		case entry.Read != nil:
+			return "READ запрещён"
+		case entry.Write != nil:
+			return "WRITE запрещён"
+		case entry.AccessError != "":
+			return "ошибка проверки"
+		default:
+			return "не проверено"
+		}
 	}
 	return strings.Join(permissions, ", ")
 }

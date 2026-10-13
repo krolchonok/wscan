@@ -513,6 +513,7 @@ func portProtocol(protocol string) string {
 	return strings.ToLower(protocol)
 }
 func (m *model) rememberSelectedPort(services []domain.Service) {
+	m.preferredPort, m.preferredProtocol = 0, ""
 	if m.hostIndex >= 0 && m.serviceIndex >= 0 && m.serviceIndex < len(services) {
 		service := services[m.serviceIndex]
 		m.preferredPort, m.preferredProtocol = service.Port, portProtocol(service.Protocol)
@@ -530,9 +531,30 @@ func (m *model) restoreSelectedPort() {
 			return
 		}
 	}
+	// The fallback moves the visible cursor without changing the saved port.
+	bestDistance := 65536
+	for i, s := range services {
+		distance := s.Port - m.preferredPort
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < bestDistance || distance == bestDistance &&
+			portProtocol(s.Protocol) == m.preferredProtocol &&
+			(m.serviceIndex < 0 || portProtocol(services[m.serviceIndex].Protocol) != m.preferredProtocol) {
+			m.serviceIndex, bestDistance = i, distance
+		}
+	}
 }
 func (m model) selectedPortMissing() bool {
-	return m.hostIndex >= 0 && m.preferredPort > 0 && m.serviceIndex < 0
+	if m.hostIndex < 0 || m.preferredPort == 0 {
+		return false
+	}
+	for _, s := range m.servicesFor(m.currentHost()) {
+		if s.Port == m.preferredPort && portProtocol(s.Protocol) == m.preferredProtocol {
+			return false
+		}
+	}
+	return true
 }
 
 // AD inventory is saved against a host, not a matcher URL. Associate only

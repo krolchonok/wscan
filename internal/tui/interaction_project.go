@@ -6,14 +6,13 @@ import (
 	"sort"
 )
 
-const interactionMenuCount = 17
-const interactionADScanIndex = 14
+const interactionMenuCount = 12
 
 func (m *model) openProjectInteractions() {
 	previous := m.screen
 	m.openInteractionMenu()
 	m.interactionReturn = previous
-	m.interactionIndex = interactionADScanIndex // Project inventory setup stays visible on entry.
+	m.interactionIndex = 0
 }
 func (m model) interactionHosts() []string {
 	hosts := make([]string, 0, len(m.inventory))
@@ -57,6 +56,9 @@ func (m model) updateInteractionTargets(key string) (tea.Model, tea.Cmd) {
 		previous := m.interactionReturn
 		m.openInteractionMenu()
 		m.interactionReturn = previous
+		if previous == "ad-menu" {
+			m.screen = "ad-menu"
+		}
 	}
 	return m, nil
 }

@@ -80,11 +80,11 @@ func TestNSEVulnButtonAndPersistedResults(t *testing.T) {
 	}
 	a := domain.Service{Host: "192.0.2.1", Port: 22, Protocol: "tcp", Name: "ssh"}
 	b := domain.Service{Host: "192.0.2.2", Port: 22, Protocol: "tcp", Name: "ssh"}
-	m := model{ctx: ctx, current: domain.Project{ID: id, TimeoutSeconds: 1, RPS: 10, Concurrency: 1}, store: store, cat: catalog.NewWithLibrary(dir, dir), interactionIndex: 13, jobEvents: make(chan jobEvent, 32), inventory: map[string]*hostInfo{a.Host: {services: []domain.Service{a}}, b.Host: {services: []domain.Service{b}}}, width: 110, height: 24}
-	if !strings.Contains(m.viewInteractionMenu(100), "NSE --script vuln") {
+	m := model{ctx: ctx, current: domain.Project{ID: id, TimeoutSeconds: 1, RPS: 10, Concurrency: 1}, store: store, cat: catalog.NewWithLibrary(dir, dir), checkMenuIndex: 2, jobEvents: make(chan jobEvent, 32), inventory: map[string]*hostInfo{a.Host: {services: []domain.Service{a}}, b.Host: {services: []domain.Service{b}}}, width: 110, height: 24}
+	if !strings.Contains(m.viewChecksMenu(100), "NSE vuln") {
 		t.Fatal("selected active action not visible")
 	}
-	got, _ := m.updateInteractionMenu("enter")
+	got, _ := m.updateChecksMenu("enter")
 	m = got.(model)
 	if m.screen != "jobs" || len(m.jobs) != 1 || m.jobs[0].kind != "nse-vuln" {
 		t.Fatal("active button did not launch its own job")
@@ -115,8 +115,8 @@ func TestNSEVulnButtonAndPersistedResults(t *testing.T) {
 	}
 }
 func TestNSEVulnNoServicesGuard(t *testing.T) {
-	m := model{interactionIndex: 13}
-	got, _ := m.updateInteractionMenu("enter")
+	m := model{checkMenuIndex: 2}
+	got, _ := m.updateChecksMenu("enter")
 	m = got.(model)
 	if len(m.jobs) != 0 || !strings.Contains(m.message, "Нет сохранённых сервисов") {
 		t.Fatal("empty inventory started active job")

@@ -39,14 +39,25 @@ func (m model) filteredProjectFindings() []domain.Finding {
 	return out
 }
 func projectResultLabel(f domain.Finding) string {
-	location := f.Target
+	return projectResultLocation(f) + " · " + resultLabel(f)
+}
+
+func projectResultLocation(f domain.Finding) string {
 	if host, port, _, ok := findingEndpoint(f.MatchedAt); ok {
-		location = host
 		if port > 0 {
-			location = net.JoinHostPort(host, strconv.Itoa(port))
+			return net.JoinHostPort(host, strconv.Itoa(port))
 		}
+		return host
 	}
-	return location + " · " + resultLabel(f)
+	// AD reports store the full scan scope in Target and the actual host in
+	// MatchedAt. Older saved runs use the same format.
+	if address := strings.TrimSpace(f.MatchedAt); len(strings.Fields(address)) == 1 {
+		return address
+	}
+	if len(strings.Fields(f.Target)) > 1 {
+		return "Область: " + scanScopeLabel(f.Target)
+	}
+	return f.Target
 }
 func (m *model) openProjectResults() {
 	if m.screen != "project-results" && m.screen != "finding-details" {

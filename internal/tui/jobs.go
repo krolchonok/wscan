@@ -57,6 +57,7 @@ type job struct {
 	adResult       *adscan.Result
 	findings       int
 	errText        string
+	checkErrors    []string
 	started        time.Time
 	ended          time.Time
 	seen           bool // results already opened by the user

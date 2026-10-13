@@ -30,7 +30,7 @@ var adAccessModes = []struct{ id, name string }{
 func (m *model) openADAccess() {
 	m.adAccessReturn = m.screen
 	m.adAccessHost, m.adAccessDomain = "", ""
-	m.adAccessIndex, m.adAccessCred = 0, -1
+	m.adAccessIndex, m.adAccessCred = 2, -1
 	m.adBloodHoundPort, m.adBloodHoundLimit = 636, 5000
 	creds, err := m.store.ListCredentials(m.ctx, m.current.ID)
 	if err == nil {
@@ -60,7 +60,7 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 		m.screen = m.adAccessReturn
 		m.message = ""
 	case "up", "k":
-		m.adAccessIndex = max(0, m.adAccessIndex-1)
+		m.adAccessIndex = max(2, m.adAccessIndex-1)
 	case "down", "j":
 		m.adAccessIndex = min(len(adAccessModes)-1, m.adAccessIndex+1)
 	case "v":
@@ -110,12 +110,12 @@ func (m model) adAccessJobRunning() bool {
 }
 
 func (m model) viewADAccess(w int) string {
-	body := headingStyle.Render("AD — учётки и первоначальный доступ") + "\n\n"
+	body := headingStyle.Render("Проверки AD") + "\n\n"
 	cred := "не выбрана (anonymous для SYSVOL)"
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = credIdentLabel(m.adAccessCreds[m.adAccessCred])
 	}
-	body += fmt.Sprintf("Хост: %s · h изменить (пустой — машины проекта для Coerce)\nДомен: %s · d изменить\nУчётка: %s · c выбрать сохранённую\n\n", valueOr(m.adAccessHost, "не задан"), valueOr(m.adAccessDomain, "не задан"), cred)
+	body += fmt.Sprintf("Хост: %s · h изменить\nДомен: %s · d изменить\nУчётка: %s · c выбрать сохранённую\n\n", valueOr(m.adAccessHost, "не задан"), valueOr(m.adAccessDomain, "не задан"), cred)
 	if strings.HasPrefix(adAccessModes[m.adAccessIndex].id, "coercion") {
 		scope := "выбранные машины с 445, иначе все с 445; h — один хост"
 		if m.adAccessHost != "" {
@@ -123,19 +123,19 @@ func (m model) viewADAccess(w int) string {
 		}
 		body += fmt.Sprintf("Приёмник: %s:445 · r изменить\nЦели Coerce: %d · %s\n\n", valueOr(m.adCoerceCallback, "не задан"), len(m.coercionTargets()), scope)
 	}
-	body += fmt.Sprintf("Responder: %s · p запустить/остановить · адрес: %s:445 (r)\n\n", m.responderStatus(), valueOr(m.adCoerceCallback, "не задан"))
 	if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
 		port, limit := m.bloodHoundSettings()
 		body += fmt.Sprintf("BloodHound CE · LDAP/%d (l) · лимит объектов/членов группы: %d (n)\n", port, limit)
 		body += "Область: выбранный домен; рабочие станции не опрашиваются.\nЭкспорт: " + filepath.Join(m.appDir, "exports", "bloodhound") + "\n"
 		body += "Не собираются: ACL, AD CS, сессии и локальные права.\n\n"
 	}
-	body += fmt.Sprintf("Диагностика Responder: %t · v переключить · журнал: g → Responder → r\n\n", m.responderDebug)
 	body += "↑/↓ выбрать проверку · Enter запустить · Esc назад\n\n"
 	for i, row := range adAccessModes {
+		if i < 2 {
+			continue
+		}
 		body += renderListRow(row.name, i == m.adAccessIndex, w)
 	}
-	body += "\nCoerce вызывает обратную SMB-аутентификацию; приёмник хранит только события и заявленную идентичность. Результаты — в «5 Результаты»."
 	if m.adAccessJobRunning() {
 		body += "\n\nВыполняется проверка… Esc — отменить"
 	}

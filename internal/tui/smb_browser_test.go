@@ -106,7 +106,12 @@ func TestSMBShareRightsLabels(t *testing.T) {
 		{js.SMBEntry{Read: &yes, Write: &yes}, "READ, WRITE"},
 		{js.SMBEntry{Read: &yes, Write: &no}, "READ"},
 		{js.SMBEntry{Read: &no, Write: &no}, "нет доступа"},
-		{js.SMBEntry{Read: &yes}, "READ, WRITE ?"},
+		{js.SMBEntry{Read: &yes}, "READ"},
+		{js.SMBEntry{Name: "krol", Read: &no}, "READ запрещён"},
+		{js.SMBEntry{Write: &yes}, "WRITE"},
+		{js.SMBEntry{Write: &no}, "WRITE запрещён"},
+		{js.SMBEntry{}, "не проверено"},
+		{js.SMBEntry{AccessError: "connection reset"}, "ошибка проверки"},
 		{js.SMBEntry{Name: "IPC$"}, "RPC (служебная)"},
 	} {
 		if got := smbRightsLabel(test.entry); got != test.want {

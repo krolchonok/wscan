@@ -60,8 +60,8 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 	}); err != nil {
 		return engine.Result{}, &details, 0, "", err
 	}
-	dnsErrors := details.Diagnostics
-	for _, diagnostic := range dnsErrors {
+	dnsErrors, dnsSkipped := adDiagnosticStatus(details.Diagnostics)
+	for _, diagnostic := range details.Diagnostics {
 		emit(diagnostic)
 	}
 	emit("Сохраняю AD-инвентаризацию в выбранный проект…")
@@ -78,6 +78,7 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 		_ = m.store.FinishRun(context.Background(), runID, status)
 	}()
 	result := engine.Result{RunID: runID, TargetsScanned: 1, Errors: append([]string(nil), dnsErrors...)}
+	result.Skipped = append(result.Skipped, dnsSkipped...)
 	result.TargetsScanned = details.HostsScanned
 	if len(details.Hosts) > 0 {
 		result.HostNames = make(map[string][]string)
@@ -251,6 +252,15 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 		result.Findings = append(result.Findings, finding)
 	}
 	checks, checkErrors := m.runADNSEChecks(ctx, details.Hosts, emit)
+	windows := m.runADWindowsChecks(ctx, details.Hosts, emit, checks)
+	checks = append(checks, windows.Findings...)
+	checkErrors = append(checkErrors, windows.Errors...)
+	result.Skipped = append(result.Skipped, windows.Skipped...)
+	details.Diagnostics = append(details.Diagnostics, checkErrors...)
+	details.Diagnostics = append(details.Diagnostics, windows.Skipped...)
+	for _, skipped := range windows.Skipped {
+		emit("Пропуск: " + skipped)
+	}
 	if ctx.Err() != nil {
 		status = "cancelled"
 		return result, &details, projectID, projectName, ctx.Err()
@@ -273,6 +283,17 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 	}
 	result.Findings = append(result.Findings, summary)
 	return result, &details, projectID, projectName, nil
+}
+
+func adDiagnosticStatus(diagnostics []string) (errs, skipped []string) {
+	for _, message := range diagnostics {
+		if strings.HasPrefix(message, "DNS SRV пропущен:") {
+			skipped = append(skipped, message)
+		} else {
+			errs = append(errs, message)
+		}
+	}
+	return
 }
 
 func adDNSFindings(cidr string, records []adscan.SRVRecord) []domain.Finding {
@@ -334,10 +355,14 @@ func adReconSummary(cidr string, result adscan.Result, findings []domain.Finding
 			spn[name] = true
 		}
 	}
-	ms17010, risks := 0, 0
+	ms17010, risks, critical := 0, 0, 0
 	for _, finding := range findings {
-		if finding.Severity == "unknown" {
+		switch domain.EffectiveSeverity(finding) {
+		case "critical", "high", "medium", "low", "unknown":
 			risks++
+			if domain.EffectiveSeverity(finding) == "critical" {
+				critical++
+			}
 			if strings.Contains(finding.TemplateID, "smb-vuln-ms17-010") {
 				ms17010++
 			}
@@ -346,6 +371,8 @@ func adReconSummary(cidr string, result adscan.Result, findings []domain.Finding
 	priority := "Дальше изучите найденные узлы и доступы в проекте."
 	if ms17010 > 0 {
 		priority = "Высший приоритет: вручную перепроверьте MS17-010 на указанных SMB-узлах."
+	} else if critical > 0 {
+		priority = "Высший приоритет: перепроверьте критические уязвимости на указанных узлах."
 	} else if smbAnonymous > 0 {
 		priority = "Приоритет: проверьте анонимно доступные SMB-ресурсы и связанные учётки."
 	} else if len(asrep) > 0 || len(spn) > 0 {
@@ -383,18 +410,7 @@ func (m Worker) runADNSEChecks(ctx context.Context, hosts []adscan.Host, emit Re
 		if ctx.Err() != nil {
 			return findings, append(errs, ctx.Err().Error())
 		}
-		var scripts []string
-		if containsInt(host.Ports, 139) || containsInt(host.Ports, 445) {
-			scripts = append(scripts,
-				"nmap/scripts/smb-protocols.nse",
-				"nmap/scripts/smb-security-mode.nse",
-				"nmap/scripts/smb-os-discovery.nse",
-				"nmap/scripts/smb-vuln-ms17-010.nse",
-			)
-		}
-		if containsInt(host.Ports, 3389) {
-			scripts = append(scripts, "nmap/scripts/rdp-ntlm-info.nse")
-		}
+		scripts := adAnonymousScripts(host.Ports)
 		if len(scripts) == 0 {
 			continue
 		}
@@ -413,7 +429,7 @@ func (m Worker) runADNSEChecks(ctx context.Context, hosts []adscan.Host, emit Re
 			path := filepath.Join(m.cat.LibraryDir(), filepath.FromSlash(id))
 			results, ran, err := runner.Run(ctx, path, nse.HostInfo{IP: host.Address}, ports)
 			if err != nil {
-				errs = append(errs, id+": "+err.Error())
+				errs = append(errs, host.Address+" · "+id+": "+err.Error())
 			}
 			if !ran {
 				continue
@@ -423,20 +439,60 @@ func (m Worker) runADNSEChecks(ctx context.Context, hosts []adscan.Host, emit Re
 					continue
 				}
 				if nse.OutputIsError(scanResult.Output) {
-					errs = append(errs, id+": "+scanResult.Output)
+					errs = append(errs, host.Address+" · "+id+": "+scanResult.Output)
 					continue
 				}
-				finding := nseFinding(host.Address, scanResult)
-				finding.Risk = "Анонимная проверка протокола без эксплуатации и записи данных."
-				if finding.Severity == "unknown" && strings.Contains(finding.TemplateID, "smb-vuln-ms17-010") {
-					finding.Name = "MS17-010 / EternalBlue: уязвимый SMBv1"
-					finding.Risk = "Проверочный SMB-запрос обнаружил признаки MS17-010; это не эксплуатация. Проверьте обновления Windows и отключите SMBv1."
-				}
-				findings = append(findings, finding)
+				findings = append(findings, adAnonymousFinding(host, scanResult))
 			}
 		}
 	}
 	return findings, errs
+}
+
+func adAnonymousScripts(ports []int) []string {
+	var scripts []string
+	if containsInt(ports, 139) || containsInt(ports, 445) {
+		scripts = append(scripts,
+			"nmap/scripts/smb-protocols.nse",
+			"nmap/scripts/smb-security-mode.nse",
+			"nmap/scripts/smb2-security-mode.nse",
+			"nmap/scripts/smb-os-discovery.nse",
+			"nmap/scripts/smb-double-pulsar-backdoor.nse",
+		)
+		// Port 445 is checked by the native MS17-010 detector, once per host.
+		// Retain the NSE transport for NetBIOS-only SMB endpoints.
+		if !containsInt(ports, 445) {
+			scripts = append(scripts, "nmap/scripts/smb-vuln-ms17-010.nse")
+		}
+	}
+	if containsInt(ports, 3389) {
+		scripts = append(scripts, "nmap/scripts/rdp-ntlm-info.nse")
+	}
+	return scripts
+}
+
+func adAnonymousFinding(host adscan.Host, result nse.ScriptResult) domain.Finding {
+	// SMB hostrule scripts still probe a specific service. Preserve that
+	// endpoint so their findings appear when its port is selected in the TUI.
+	if result.Port == 0 && strings.HasPrefix(result.ScriptID, "smb") {
+		if containsInt(host.Ports, 445) {
+			result.Port = 445
+		} else if containsInt(host.Ports, 139) {
+			result.Port = 139
+		}
+	}
+	finding := nseFinding(host.Address, result)
+	finding.Risk = "Анонимная проверка протокола без эксплуатации и записи данных."
+	if finding.Severity == "unknown" && result.ScriptID == "smb-vuln-ms17-010" {
+		finding.Name = "MS17-010 / EternalBlue: уязвимый SMBv1"
+		finding.Severity = "critical"
+		finding.Risk = "Проверочный SMB-запрос обнаружил признаки MS17-010; это не эксплуатация. Проверьте обновления Windows и отключите SMBv1."
+	}
+	if finding.Severity == "unknown" && result.ScriptID == "smb-double-pulsar-backdoor" {
+		finding.Name = "DoublePulsar: SMB-бэкдор"
+		finding.Severity = "critical"
+	}
+	return finding
 }
 
 func enumerateAnonymousSMB(ctx context.Context, result *adscan.Result, onHost func(string)) error {

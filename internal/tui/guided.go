@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -10,118 +11,99 @@ import (
 	"wscan/internal/app"
 )
 
-var overviewActions = []string{"Начать проверку…", "Открыть хосты", "Открыть результаты", "Открыть задачи", "Учётные записи", "Настройки проекта", "Выбрать проверки проекта"}
-
-func (m model) viewOverview(w int) string {
-	var b strings.Builder
-	b.WriteString(headingStyle.Render("Обзор проекта") + "\n")
-	b.WriteString(ansi.Truncate("Область: "+strings.Join(m.current.Targets, ", "), max(1, w-4), "…") + "\n")
-	b.WriteString(fmt.Sprintf("Хостов: %d · запусков: %d · проверок: %d\n", len(m.hostOrder), len(m.history), len(m.current.TemplateIDs)))
-	lo, hi := windowRange(m.overviewIndex, len(overviewActions), max(1, m.bodyHeight()-7))
-	for i := lo; i < hi; i++ {
-		b.WriteString(renderListRow(overviewActions[i], m.overviewIndex == i, w-4))
-	}
-	if hi < len(overviewActions) {
-		b.WriteString("↓ Ещё действия\n")
-	}
-	return m.renderPanel(w, b.String())
-}
+// Compatibility routes share the current workspace instead of a second menu.
+func (m model) viewOverview(w int) string { return m.viewRecon(w) }
 func (m model) updateOverview(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "up", "k":
-		m.overviewIndex = max(0, m.overviewIndex-1)
-	case "down", "j":
-		m.overviewIndex = min(len(overviewActions)-1, m.overviewIndex+1)
-	case "s":
-		m.openGuidedScan()
-	case "esc":
-		m.screen = "projects"
-	case "enter":
-		switch m.overviewIndex {
-		case 0:
-			m.openGuidedScan()
-		case 1:
-			m.openHostScope("")
-		case 2:
-			m.openProjectResults()
-		case 3:
-			m.jobsReturn = m.screen
-			m.screen = "jobs"
-		case 4:
-			m.openCredentials()
-		case 5:
-			m.screen = "settings"
-		case 6:
-			m.pendingTemplateIDs = nil
-			m.openCatalog(false, "overview")
-		}
-	}
-	return m, nil
+	m.screen = "recon"
+	return m.updateRecon(key)
 }
+
 func (m *model) openGuidedScan() {
 	m.wizardStep = 0
 	m.wizardIndex = 0
 	m.wizardProfile = 0
 	m.wizardScope = strings.Join(m.current.Targets, "\n")
 	if len(m.current.Targets) > 0 {
-		m.wizardIndex = 1
+		m.wizardStep = 1
 	}
 	m.message = ""
 	m.screen = "guided-scan"
 }
 
+var scanProfileChoices = []int{0, 2, 3}
+
 var guidedProfiles = []string{"Поиск портов и сервисов", "Аудит AD без учётки", "Обнаружение и проверки проекта", "Проверки известных сервисов"}
 
 func (m model) viewGuidedScan(w int) string {
 	var b strings.Builder
-	b.WriteString(headingStyle.Render("Начать проверку") + "\n")
-	b.WriteString(fmt.Sprintf("Шаг %d / 3 · Область → Профиль → Перед запуском\n", m.wizardStep+1))
+	title := "Сканирование"
+	if m.wizardProfile == 1 {
+		title = "Разведка AD"
+	}
+	b.WriteString(headingStyle.Render(title) + "\n")
+
 	switch m.wizardStep {
 	case 0:
-		b.WriteString(renderListRow("Область: "+strings.ReplaceAll(m.wizardScope, "\n", ", ")+" · Enter изменить", m.wizardIndex == 0, w))
+		b.WriteString(renderListRow("Цели: "+scanScopeLabel(m.wizardScope)+" · изменить", m.wizardIndex == 0, w))
 		b.WriteString(renderListRow("Продолжить →", m.wizardIndex == 1, w))
-		b.WriteString("\nУкажите CIDR, IP или URL. Только эти цели попадут в запуск.")
 	case 1:
-		for i, p := range guidedProfiles {
-			b.WriteString(renderListRow(p, m.wizardIndex == i, w))
+		b.WriteString(ansi.Truncate("Цели: "+scanScopeLabel(m.wizardScope), max(1, w-4), "…") + "\n\n")
+		for i, profile := range scanProfileChoices {
+			b.WriteString(renderListRow(guidedProfiles[profile], m.wizardIndex == i, w))
 		}
-		b.WriteString("\nEnter выбирает профиль и открывает сводку.\nAD: IP, имена хостов и частные IPv4 CIDR; DNS/домены\nчерез прежний AD-экран в разделе «Взаимодействие».")
+		b.WriteString(renderListRow("Изменить цели", m.wizardIndex == len(scanProfileChoices), w))
 	case 2:
-		b.WriteString(ansi.Truncate("Проект: "+m.current.Name, max(1, w-4), "…") + "\n")
-		b.WriteString(ansi.Truncate("Область: "+strings.ReplaceAll(m.wizardScope, "\n", ", "), max(1, w-4), "…") + "\n")
-		b.WriteString(ansi.Truncate("Профиль: "+guidedProfiles[m.wizardProfile], max(1, w-4), "…") + "\n")
-		if m.wizardProfile == 1 {
-			b.WriteString("До 250 TCP-проб/с · AD без учётки\n")
-		} else {
-			b.WriteString(fmt.Sprintf("Discovery: %d/с · проверки: %d RPS\n", m.current.DiscoveryRPS, m.current.RPS))
-		}
+		b.WriteString(ansi.Truncate("Цели: "+scanScopeLabel(m.wizardScope), max(1, w-4), "…") + "\n")
+		b.WriteString(ansi.Truncate(guidedProfiles[m.wizardProfile], max(1, w-4), "…") + "\n")
 		if m.wizardProfile >= 2 {
 			b.WriteString(fmt.Sprintf("Выбрано проверок: %d\n", len(m.current.TemplateIDs)))
 			if len(m.current.TemplateIDs) == 0 {
 				b.WriteString("Нет проверок: выберите их в обзоре.\n")
 			}
 		}
-		b.WriteString(renderListRow("Запустить проверку", true, w-4))
+		label := "Запустить проверку"
+		if m.wizardProfile == 0 {
+			label = "Настроить порты →"
+		}
+		b.WriteString(renderListRow(label, true, w-4))
 
 	}
 	b.WriteString("\nEnter — действие · Esc — предыдущий шаг")
-	return m.renderPanel(w, b.String())
+	body := b.String()
+	if m.hasSidebar() {
+		var lines []string
+		for _, line := range strings.Split(body, "\n") {
+			if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "Enter — действие") {
+				lines = append(lines, ansi.Truncate(line, max(1, w-4), "…"))
+			}
+		}
+		body = strings.Join(lines, "\n")
+	}
+	return m.renderPanel(w, body)
 }
 func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc":
 		if m.wizardStep > 0 {
-			m.wizardStep--
+			if m.wizardProfile == 1 {
+				m.wizardStep = 0
+			} else {
+				m.wizardStep--
+			}
 			m.wizardIndex = 0
 		} else {
-			m.screen = "overview"
+			if m.wizardProfile == 1 {
+				m.screen = "ad-menu"
+			} else {
+				m.screen = "desk"
+			}
 		}
 	case "up", "k":
 		m.wizardIndex = max(0, m.wizardIndex-1)
 	case "down", "j":
 		limit := 1
 		if m.wizardStep == 1 {
-			limit = len(guidedProfiles) - 1
+			limit = len(scanProfileChoices)
 		}
 		m.wizardIndex = min(limit, m.wizardIndex+1)
 	case "enter":
@@ -136,15 +118,37 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 				m.message = "Добавьте область проверки"
 				return m, nil
 			}
-			m.wizardStep = 1
-			m.wizardIndex = m.wizardProfile
+			if m.wizardProfile == 1 {
+				m.wizardStep = 2
+			} else {
+				m.wizardStep = 1
+				m.wizardIndex = 0
+			}
 		case 1:
-			m.wizardProfile = m.wizardIndex
+			if m.wizardIndex == len(scanProfileChoices) {
+				m.startInput("guided-scope")
+				m.input = m.wizardScope
+				return m, nil
+			}
+			m.wizardProfile = scanProfileChoices[min(max(0, m.wizardIndex), len(scanProfileChoices)-1)]
 			m.wizardStep = 2
 			m.wizardIndex = 0
+			if m.wizardProfile == 0 {
+				m.actionHosts = strings.Fields(m.wizardScope)
+				m.actionService = nil
+				m.openDiscOptions()
+				m.wizardStep = 1
+				return m, nil
+			}
 		case 2:
 			hosts := strings.Fields(m.wizardScope)
 			kind := []string{jobDiscover, jobAD, jobFull, jobChecks}[m.wizardProfile]
+			if kind == jobDiscover {
+				m.actionHosts = append([]string(nil), hosts...)
+				m.actionService = nil
+				m.openDiscOptions()
+				return m, nil
+			}
 			if kind == jobAD {
 				if err := adscan.ValidateTargets(hosts); err != nil {
 					m.message = err.Error()
@@ -167,10 +171,55 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 			} else {
 				m.startLaunch(launchSpec{kind: kind, label: guidedProfiles[m.wizardProfile], hosts: hosts, templateIDs: m.current.TemplateIDs, discNoPing: true})
 			}
-			m.jobsReturn = "overview"
+			m.jobsReturn = "desk"
 			m.screen = "jobs"
 			m.message = "Задача запущена. Enter — подробности, x — остановить."
 		}
 	}
 	return m, nil
+}
+
+// Summarize the scope for display without changing the requested targets.
+func scanScopeLabel(scope string) string {
+	targets := uniqueStrings(strings.Fields(scope))
+	if len(targets) == 0 {
+		return "не заданы"
+	}
+	var ranges []string
+	var networks []*net.IPNet
+	for _, target := range targets {
+		if _, network, err := net.ParseCIDR(target); err == nil {
+			ranges = append(ranges, target)
+			networks = append(networks, network)
+		}
+	}
+	if len(ranges) == 0 {
+		if len(targets) <= 3 {
+			return strings.Join(targets, ", ")
+		}
+		return fmt.Sprintf("%d целей · %s, %s…", len(targets), targets[0], targets[1])
+	}
+	extra := 0
+	for _, target := range targets {
+		if _, _, err := net.ParseCIDR(target); err == nil {
+			continue
+		}
+		covered := false
+		if ip := net.ParseIP(target); ip != nil {
+			for _, network := range networks {
+				if network.Contains(ip) {
+					covered = true
+					break
+				}
+			}
+		}
+		if !covered {
+			extra++
+		}
+	}
+	label := strings.Join(ranges, ", ")
+	if extra > 0 {
+		label += fmt.Sprintf(" · ещё %d целей", extra)
+	}
+	return label
 }

@@ -378,8 +378,7 @@ func (m model) viewMSSQL(w int) string {
 		}
 		body += "\nEnter вход · c учётки · p порт · s TLS · t доверять сертификату"
 	} else {
-		body += "1 пользователь · 2 права · 3 базы · 4 таблицы · 5 столбцы\n6 настройки · 7 IMPERSONATE · 8 linked servers\nb база · n NSE с выбранной учёткой · Enter меню · c SQL / алиасы · Esc закрыть\n"
-		body += ":db · :tables · :columns dbo.table · :rows dbo.table [100] · :count dbo.table\n"
+		body += "Enter — действия MSSQL\n"
 		lines := strings.Split(ansi.Wrap(b.transcript, max(1, w-6), ""), "\n")
 		count := max(1, m.panelRows()-7)
 		lo := min(b.offset, max(0, len(lines)-count))

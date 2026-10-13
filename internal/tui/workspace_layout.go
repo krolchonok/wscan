@@ -89,7 +89,11 @@ func (m model) viewHostWorkspace(width int) string {
 			body.WriteString("Подсеть: " + m.hostNetwork + "\n\n")
 			body.WriteString("Хосты в этой подсети пока не найдены.\n1 — открыть подсети и запустить обнаружение.\n2 — показать все хосты проекта.")
 		} else {
-			body.WriteString("Добавь отдельный хост клавишей a\nили открой подсети клавишей 1 и найди машины в диапазоне.")
+			if m.hasSidebar() {
+				body.WriteString("Машин пока нет.\n4 Добавить цель — IP или CIDR\n2 Сканировать — найти хосты и порты.")
+			} else {
+				body.WriteString("Добавь отдельный хост клавишей a\nили открой подсети клавишей 1 и найди машины в диапазоне.")
+			}
 		}
 		return m.renderPanel(width, body.String())
 	}
@@ -208,6 +212,9 @@ func (m model) networkCard(width int) string {
 }
 
 func (m model) navigationLine() string {
+	if m.hasSidebar() {
+		return mutedStyle.Render("Проект → Хосты → Порты → Результаты")
+	}
 	if m.current.ID == 0 || m.screen == "projects" {
 		return mutedStyle.Render("Проекты · Enter открыть · n создать")
 	}
@@ -240,6 +247,9 @@ func (m model) contextLine() string {
 	case "history":
 		return mutedStyle.Render("Enter — только выбранный запуск · 5 — результаты всего проекта")
 	case "job-details":
+		if m.jobDetailErrors {
+			return mutedStyle.Render("Ошибки проверки · ↑/↓ полный текст · ←/→ вкладки")
+		}
 		if m.jobDetailRaw {
 			return mutedStyle.Render("Технический журнал · r вернуться к итогу")
 		}

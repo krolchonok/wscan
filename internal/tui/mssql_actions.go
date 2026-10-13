@@ -13,6 +13,7 @@ var mssqlActions = []string{
 	"Проверить sysadmin", "Состояние xp_cmdshell", "Выполнить команду через xp_cmdshell",
 	"Включить xp_cmdshell", "Выключить xp_cmdshell", "SQL-запрос",
 	"Передать файл через HTTP (Python)", "Запустить WinPEAS (фоновый процесс)", "Прочитать отчёт WinPEAS / текстовый файл", "Следующие 400 строк отчёта",
+	"Пользователь и сервер", "Права учётки", "Настройки сервера", "IMPERSONATE", "Linked servers", "NSE с текущей учёткой",
 }
 
 func (m model) updateMSSQLActions(key string) (tea.Model, tea.Cmd) {
@@ -99,6 +100,12 @@ func (m model) updateMSSQLActions(key string) (tea.Model, tea.Cmd) {
 			if m.input == "" {
 				m.input = `%TEMP%\winPEAS.exe.txt`
 			}
+		case 17, 18, 19, 20, 21:
+			kind := []string{"identity", "permissions", "configuration", "impersonate", "linked-servers"}[b.actionIndex-17]
+			return m.startMSSQL("audit", kind)
+		case 22:
+			m.startInput("mssql-nse")
+			m.input = "ms-sql-info"
 		case 16:
 			if b.reportPath == "" {
 				m.message = "Сначала выбери отчёт"

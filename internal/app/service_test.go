@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 	"wscan/internal/catalog"
 	"wscan/internal/domain"
 	"wscan/internal/engine"
@@ -111,7 +112,9 @@ func TestADProfileUsesTwoProjectHostsWithoutCIDR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished := waitJob(t, s.Jobs, job.ID)
+	// Wildcard SMB/RDP listeners on the development machine can now receive
+	// actual native protocol checks in this integration test.
+	finished := waitJob(t, s.Jobs, job.ID, 30*time.Second)
 	if finished.Status != "done" {
 		t.Fatalf("AD job failed: %+v", finished)
 	}

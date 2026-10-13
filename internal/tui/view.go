@@ -71,6 +71,12 @@ func (m model) View() string {
 		header += mutedStyle.Render("  /  " + m.current.Name)
 	}
 
+	outerW := w
+	sidebar := m.hasSidebar()
+	if sidebar {
+		w -= sidebarWidth(outerW)
+		m.width = w
+	}
 	var body string
 	switch m.screen {
 	case "web-connect":
@@ -121,6 +127,14 @@ func (m model) View() string {
 		body = m.viewSMBBrowser(w)
 	case "project-delete-confirm":
 		body = m.viewProjectDelete(w)
+	case "checks-menu":
+		body = m.viewChecksMenu(w)
+	case "ad-menu":
+		body = m.viewADMenu(w)
+	case "recon-host-menu":
+		body = m.viewReconHostMenu(w)
+	case "recon":
+		body = m.viewRecon(w)
 	case "overview":
 		body = m.viewOverview(w)
 	case "guided-scan":
@@ -206,6 +220,11 @@ func (m model) View() string {
 	case "help":
 		body = m.viewHelp(w)
 	}
+	if sidebar {
+		m.width = outerW
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.viewSidebar(sidebarWidth(outerW)), fitContent(body, w, m.bodyHeight()))
+		w = outerW
+	}
 	lines := []string{
 		fitContent(header, w, 1),
 		fitContent(m.navigationLine(), w, 1),
@@ -213,7 +232,7 @@ func (m model) View() string {
 		fitContent(body, w, m.bodyHeight()),
 		fitContent(m.activityLine(), w, 1),
 		fitContent(messageStyle.Render(m.message), w, 1),
-		fitContent(mutedStyle.Render(m.footer()+"   ·   ? помощь"), w, 1),
+		fitContent(mutedStyle.Render(m.workspaceFooter()), w, 1),
 	}
 	return fitContent(strings.Join(lines, "\n"), w, h)
 }
@@ -323,6 +342,10 @@ func (m model) footer() string {
 		return "↑↓ выбор · Enter открыть · ← назад · d скачать · e CSV · a null/guest · c учётка · f конфигурации · r обновить · Esc выход/отмена"
 	case "project-delete-confirm":
 		return "Enter удалить проект · Esc отмена"
+	case "recon":
+		return "← меню · → содержимое · ↑↓ выбор · Enter открыть"
+	case "recon-host-menu":
+		return "← меню · → содержимое · ↑↓ действие · Enter открыть"
 	case "overview":
 		if m.webURL != "" {
 			return "↑↓ действие · Enter открыть · s запуск · w Web · Esc проекты"
@@ -366,15 +389,18 @@ func (m model) footer() string {
 		}
 		return "↑/↓ выбор   Space выбрать проверки   Enter запустить   Esc назад"
 	case "disc-options":
-		return "↑/↓ параметр · ←/→/Space изменить · e значение · Enter запуск · Esc назад"
+		return "↑/↓ параметр · Enter скан · ←→/Space изменить · e ввод"
 	case "jobs":
 		return "↑/↓ задача   Enter подробности и лог   x отменить   c очистить   e экспорт   Esc назад"
 	case "job-details":
+		if m.jobDetailErrors {
+			return "←/→ вкладки · ↑/↓ ошибки · Home/End · Enter результаты · Esc задачи"
+		}
 		if !m.jobDetailRaw {
 			if m.jobIndex >= 0 && m.jobIndex < len(m.jobs) && m.jobs[m.jobIndex].opensHostResults() {
 				return "Enter хосты и порты · r журнал · x отменить · e экспорт · Esc задачи"
 			}
-			return "Enter результаты · r журнал · x отменить · e экспорт · Esc задачи"
+			return "←/→ итог/ошибки/журнал · Enter результаты · x отменить · e экспорт · Esc задачи"
 		}
 		return "↑/↓ журнал   Enter результаты   r журнал/итог   x отменить   e экспорт   Esc задачи"
 	case "project-results":
@@ -594,7 +620,7 @@ func (m model) renderHostsColumn(width, height int) string {
 		}
 	}
 	body.WriteString(moreLine(len(m.hostOrder)-hi, false))
-	return renderColumn(body.String(), width, height, m.focusCol == 0)
+	return renderColumn(body.String(), width, height, m.focusCol == 0 && !m.reconMenuFocus)
 }
 
 func (m model) renderServicesColumn(width, height int) string {
@@ -607,15 +633,15 @@ func (m model) renderServicesColumn(width, height int) string {
 	body.WriteString(headingStyle.Render(title) + "\n")
 	if m.hostIndex < 0 {
 		body.WriteString(mutedStyle.Render("Выбери хост, чтобы увидеть порты") + "\n")
-		return renderColumn(body.String(), width, height, m.focusCol == 1)
+		return renderColumn(body.String(), width, height, m.focusCol == 1 && !m.reconMenuFocus)
 	}
 	services := m.servicesFor(host)
 	if m.selectedPortMissing() {
-		body.WriteString(renderListRow(fmt.Sprintf("%d/%s — не найден", m.preferredPort, m.preferredProtocol), true, width+4))
+		body.WriteString(mutedStyle.Render(fmt.Sprintf("%d/%s — нет", m.preferredPort, m.preferredProtocol)) + "\n")
 	}
 	if len(services) == 0 {
 		body.WriteString(mutedStyle.Render("Портов пока нет.\nНажми Enter → найти порты.") + "\n")
-		return renderColumn(body.String(), width, height, m.focusCol == 1)
+		return renderColumn(body.String(), width, height, m.focusCol == 1 && !m.reconMenuFocus)
 	}
 	_, allFindings := m.hostSummary(host)
 	allPortsLine := fmt.Sprintf("%-*s %2dП %2dН", max(8, width-14), "Все порты", len(services), allFindings)
@@ -666,7 +692,7 @@ func (m model) renderServicesColumn(width, height int) string {
 		body.WriteString(renderListRow(line, i == m.serviceIndex, width+4))
 	}
 	body.WriteString(moreLine(len(services)-hi, false))
-	return renderColumn(body.String(), width, height, m.focusCol == 1)
+	return renderColumn(body.String(), width, height, m.focusCol == 1 && !m.reconMenuFocus)
 }
 
 func (m model) renderDetailsColumn(width, height int) string {
@@ -676,16 +702,12 @@ func (m model) renderDetailsColumn(width, height int) string {
 	host := m.currentHost()
 	if host == "" {
 		body.WriteString(mutedStyle.Render("Выбери хост слева"))
-		return renderColumn(body.String(), width, height, m.focusCol == 2)
+		return renderColumn(body.String(), width, height, m.focusCol == 2 && !m.reconMenuFocus)
 	}
 	if names := m.namesForHost(host); len(names) > 0 && !compact {
 		fmt.Fprintf(&body, "DNS: %s\n", strings.Join(names, ", "))
 	}
 	services := m.servicesFor(host)
-	if m.selectedPortMissing() {
-		fmt.Fprintf(&body, "%d/%s не найден у %s.\nВыбор порта сохранён для следующего хоста.", m.preferredPort, m.preferredProtocol, host)
-		return renderColumn(body.String(), width, height, m.focusCol == 2)
-	}
 	if m.serviceIndex < 0 || m.serviceIndex >= len(services) || len(services) == 0 {
 		findings := m.findingsFor(host)
 		if m.serviceIndex < 0 && len(services) > 0 {
@@ -707,7 +729,7 @@ func (m model) renderDetailsColumn(width, height int) string {
 			}
 			body.WriteString(moreLine(len(findings)-hi, false))
 		}
-		return renderColumn(body.String(), width, height, m.focusCol == 2)
+		return renderColumn(body.String(), width, height, m.focusCol == 2 && !m.reconMenuFocus)
 	}
 	s := services[m.serviceIndex]
 	if compact {
@@ -758,7 +780,7 @@ func (m model) renderDetailsColumn(width, height int) string {
 		}
 		body.WriteString(moreLine(len(findings)-hi, false))
 	}
-	return renderColumn(body.String(), width, height, m.focusCol == 2)
+	return renderColumn(body.String(), width, height, m.focusCol == 2 && !m.reconMenuFocus)
 }
 
 func truncateMid(s string, n int) string {
@@ -798,7 +820,7 @@ func (m model) viewActionMenu(w int) string {
 func (m model) viewDiscOptions(w int) string {
 	var body strings.Builder
 	body.WriteString(headingStyle.Render("Сканирование портов") + "\n")
-	fmt.Fprintf(&body, "Цели: %s\n\n", strings.Join(m.discHosts, ", "))
+	fmt.Fprintf(&body, "Цели: %s\n\n", scanScopeLabel(strings.Join(m.discHosts, " ")))
 	setLabel := discSetLabels[m.discSetIndex]
 	rows := []string{
 		"Набор портов:  " + setLabel,
@@ -811,6 +833,7 @@ func (m model) viewDiscOptions(w int) string {
 		fmt.Sprintf("Параллельность: %d", m.discProject.DiscoveryConcurrency),
 		"Добавлять: " + portResultPolicy(m.discOnlyKnown),
 		checkMark(m.discNoPing) + "  -Pn: пропустить host discovery и сканировать все адреса",
+		"← Назад",
 	}
 	lo, hi := windowRange(m.discOptIndex, len(rows), max(1, m.bodyHeight()-8))
 	body.WriteString(moreLine(lo, true))

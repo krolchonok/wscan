@@ -179,10 +179,6 @@ func (m *model) launchADScan(cidr string) {
 
 // adResultProject adds discovered targets without replacing existing scope or settings.
 
-// runADNSEChecks runs a fixed allowlist of safe, unauthenticated SMB/RDP
-// discovery checks. The vulnerability probe is Nmap's safe MS17-010 check;
-// no exploit payload is sent.
-
 func (m model) viewADScan(w int) string {
 	var body strings.Builder
 	body.WriteString(headingStyle.Render("AD-аудит сети") + "\n")

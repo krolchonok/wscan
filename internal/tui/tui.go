@@ -41,7 +41,16 @@ type model struct {
 	wizardIndex      int
 	wizardScope      string
 	wizardProfile    int
-	overviewIndex    int
+	sidebarEnabled   bool
+	reconMenuFocus   bool
+	reconMenuIndex   int
+	checkMenuIndex   int
+	adMenuIndex      int
+	reconInfoOffset  int
+	reconCardFocus   bool
+	reconHostAction  int
+	reconFilter      int
+	reconIndex       int
 	hiddenSharedJobs map[int]bool
 
 	catalogReadOnly      bool
@@ -134,13 +143,14 @@ type model struct {
 	findingPane              int // 0 result list, 1 detail scrolling
 
 	// background jobs
-	jobs         []*job
-	jobSeq       int
-	jobEvents    chan jobEvent
-	jobIndex     int
-	jobsReturn   string
-	logOffset    int
-	jobDetailRaw bool
+	jobs            []*job
+	jobSeq          int
+	jobEvents       chan jobEvent
+	jobIndex        int
+	jobsReturn      string
+	logOffset       int
+	jobDetailRaw    bool
+	jobDetailErrors bool
 
 	// Local Active Directory discovery window. The scan is unauthenticated,
 	// read-only, and restricted to a selected private IPv4 interface subnet.
@@ -185,6 +195,7 @@ type model struct {
 	actionService *domain.Service
 
 	// discovery options (opened before launching a Discover action)
+	discReturn   string
 	discOptIndex int
 	discSetIndex int // 0 common, 1 top100, 2 top1000, 3 all, 4 custom
 	discCustom   string
@@ -360,13 +371,11 @@ func (m *model) openProject(p domain.Project) {
 	m.projectResultsFilter = "important"
 	m.focusCol = 0
 	m.screen = "desk"
-	if m.guided {
-		m.screen = "overview"
-		return
-	}
-	if len(m.hostOrder) == 0 && len(m.networkTargets()) > 0 {
-		m.screen = "networks"
-	}
+	m.sidebarEnabled = true
+	m.reconIndex, m.reconFilter = 0, 0
+	m.reconCardFocus = false
+	m.reconMenuFocus = len(m.hostOrder) == 0
+	m.reconMenuIndex = 0
 	m.message = ""
 }
 
@@ -729,7 +738,11 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "guided-scope":
 			m.wizardScope = value
 			m.screen = "guided-scan"
-			m.wizardIndex = 1
+			if m.wizardStep == 0 {
+				m.wizardIndex = 1
+			} else {
+				m.wizardIndex = 0
+			}
 			return m, nil
 		case "ad-recon-dns", "ad-recon-domains", "ad-recon-budget":
 			options := m.adScanDNS
@@ -1057,7 +1070,7 @@ func (m model) groupValues(e catalog.Entry) []string {
 				values = append(values, value)
 			}
 		}
-		return values
+		return uniqueStrings(values)
 	}
 	return []string{strings.TrimSpace(e.Type)}
 }
@@ -1085,7 +1098,14 @@ func (m model) groupCounts() (total, selected map[string]int) {
 	total = map[string]int{}
 	selected = map[string]int{}
 	set := m.selectedSet()
+	seenPaths := map[string]bool{}
 	for _, e := range m.entries {
+		if e.Path != "" {
+			if seenPaths[e.Path] {
+				continue
+			}
+			seenPaths[e.Path] = true
+		}
 		if !m.inCurrentFamily(e) || e.Checked && !e.Available {
 			continue
 		}
@@ -1107,7 +1127,14 @@ func (m model) groupCounts() (total, selected map[string]int) {
 func (m model) groupTemplateIDs(name string, includeUnavailable ...bool) []string {
 	var ids []string
 	all := len(includeUnavailable) > 0 && includeUnavailable[0]
+	seenPaths := map[string]bool{}
 	for _, e := range m.entries {
+		if e.Path != "" {
+			if seenPaths[e.Path] {
+				continue
+			}
+			seenPaths[e.Path] = true
+		}
 		if !m.inCurrentFamily(e) || !all && e.Checked && !e.Available {
 			continue
 		}
@@ -1152,7 +1179,14 @@ func entryHasProduct(entry catalog.Entry, product string) bool {
 func (m *model) applyFilter() {
 	m.filtered = m.filtered[:0]
 	q := strings.ToLower(m.search)
+	seenPaths := map[string]bool{}
 	for _, e := range m.entries {
+		if e.Path != "" {
+			if seenPaths[e.Path] {
+				continue
+			}
+			seenPaths[e.Path] = true
+		}
 		isNSE := strings.HasPrefix(e.Path, "nmap/scripts/")
 		familyOK := m.catalogFamily == "" || (m.catalogFamily == "nmap" && isNSE) || (m.catalogFamily == "nuclei" && !isNSE)
 		categoryOK := m.catalogCategory == "" ||
@@ -1180,7 +1214,14 @@ func (m model) visibleCatalogGroups() []libraryGroup {
 	counts := map[string]int{}
 	available := map[string]int{}
 	q := strings.ToLower(strings.TrimSpace(m.search))
+	seenPaths := map[string]bool{}
 	for _, entry := range m.entries {
+		if entry.Path != "" {
+			if seenPaths[entry.Path] {
+				continue
+			}
+			seenPaths[entry.Path] = true
+		}
 		if !m.inCurrentFamily(entry) {
 			continue
 		}

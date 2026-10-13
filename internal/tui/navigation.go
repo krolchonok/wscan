@@ -3,6 +3,7 @@ package tui
 // Workspace navigation has one definition for the key router and the UI.
 // Editors, confirmations and interactive consoles retain their own keys.
 var workspaceTabs = []struct{ key, label, screen string }{
+	{"0", "Разведка", "recon"},
 	{"1", "Подсети", "networks"}, {"2", "Хосты", "desk"}, {"3", "Задачи", "jobs"}, {"4", "Взаимодействие", "interaction-menu"}, {"5", "Результаты", "project-results"},
 }
 
@@ -11,7 +12,7 @@ func (m model) workspaceNavigationAllowed() bool {
 		return false
 	}
 	switch m.screen {
-	case "overview", "desk", "networks", "jobs", "job-details", "interaction-menu", "project-results", "finding-details", "history":
+	case "recon", "overview", "desk", "networks", "jobs", "job-details", "interaction-menu", "project-results", "finding-details", "history":
 		return true
 	case "service-inventory":
 		return !m.serviceInventoryEditing
@@ -24,7 +25,8 @@ func (m model) navigateWorkspace(key string) (model, bool) {
 	}
 	switch key {
 	case "0":
-		m.screen, m.message = "overview", ""
+		m.openHostScope("")
+		m.screen, m.message = "recon", ""
 	case "1":
 		m.screen, m.message = "networks", ""
 	case "2":
@@ -54,7 +56,7 @@ func workspaceSection(screen string) string {
 }
 func screenTitle(screen string) string {
 	titles := map[string]string{
-		"overview": "Обзор", "guided-scan": "Начать проверку", "projects": "Проекты", "desk": "Хосты", "networks": "Подсети", "jobs": "Задачи", "job-details": "Итог задачи", "history": "История запусков", "project-results": "Результаты", "finding-details": "Результаты",
+		"checks-menu": "Проверки", "ad-menu": "AD", "recon": "Разведка", "overview": "Обзор", "guided-scan": "Начать проверку", "projects": "Проекты", "desk": "Хосты", "networks": "Подсети", "jobs": "Задачи", "job-details": "Итог задачи", "history": "История запусков", "project-results": "Результаты", "finding-details": "Результаты",
 		"interaction-menu": "Взаимодействие", "interaction-targets": "Выбор машины", "smb-setup": "Вход SMB", "smb-browser": "SMB-проводник", "ftp-setup": "Вход FTP", "ftp-browser": "FTP-проводник", "winrm-setup": "Вход WinRM", "winrm-browser": "WinRM-проводник", "winrm-shell": "Консоль WinRM",
 		"pg-setup": "Вход PostgreSQL", "pg-console": "PostgreSQL", "mysql-setup": "Вход MySQL", "mysql-console": "MySQL", "mssql-setup": "Вход MSSQL", "mssql-console": "MSSQL", "mssql-actions": "Действия MSSQL", "mssql-xp-confirm": "Подтверждение команды MSSQL",
 		"web-discovery": "Поиск Web", "web-wordlists": "Словари Web", "sqli-form": "Проверка SQLi", "file-upload": "Проверка загрузки файлов", "lfi-audit": "Проверка LFI", "ssh-dictionary": "Проверка SSH", "ssh-password-lists": "Словари SSH", "kyocera-book": "Адресная книга Kyocera",

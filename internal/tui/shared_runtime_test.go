@@ -2,14 +2,50 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"wscan/internal/app"
 	"wscan/internal/engine"
 )
+
+func TestSharedJobSnapshotsKeepNumericOrderAndSelectedTask(t *testing.T) {
+	m := model{screen: "jobs", width: 160, height: 40}
+	for _, id := range []int{7, 3, 12, 2, 10} {
+		m.addSharedJob(app.Job{ID: id, JobRequest: app.JobRequest{Label: "scan"}})
+		for i := 1; i < len(m.jobs); i++ {
+			if m.jobs[i-1].id >= m.jobs[i].id {
+				t.Fatal("restored or new snapshots broke numeric task order")
+			}
+		}
+		if m.jobs[m.jobIndex].id != 7 {
+			t.Fatal("inserting a snapshot changed the selected task")
+		}
+	}
+	view := ansi.Strip(m.viewJobs(160))
+	last := -1
+	for _, id := range []int{2, 3, 7, 10, 12} {
+		pos := strings.Index(view, fmt.Sprintf("#%d ", id))
+		if pos <= last {
+			t.Fatalf("task #%d is missing or out of order", id)
+		}
+		last = pos
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	m.addSharedJob(app.Job{ID: 1, JobRequest: app.JobRequest{Label: "restored"}})
+	if m.screen != "job-details" || m.jobs[m.jobIndex].id != 7 {
+		t.Fatal("refresh switched the opened task details")
+	}
+	m.addSharedJob(app.Job{ID: 7})
+	if len(m.jobs) != 6 || m.jobs[m.jobIndex].id != 7 {
+		t.Fatal("existing snapshot was duplicated or changed selection")
+	}
+}
 
 func TestSharedJobsAppearAndCancelInTUI(t *testing.T) {
 	m := newTestModelForSettings(t)
@@ -62,17 +98,18 @@ func TestGuidedOverviewAndReviewFitSmallTerminal(t *testing.T) {
 	m := newTestModelForSettings(t)
 	m.guided = true
 	m.openProject(m.current)
-	if m.screen != "overview" {
-		t.Fatal("project did not open on overview")
+	if m.screen != "desk" {
+		t.Fatal("project did not open on hosts")
 	}
 	for _, size := range [][2]int{{55, 18}, {100, 24}, {160, 40}} {
 		m.width, m.height = size[0], size[1]
 		text := ansi.Strip(m.View())
-		if !strings.Contains(text, "Начать проверку") {
+		if !strings.Contains(text, "Сканировать") {
 			t.Fatalf("primary action hidden at %v: %s", size, text)
 		}
 	}
 	m.openGuidedScan()
+	m.wizardStep = 0
 	m.wizardIndex = 1
 	m.wizardScope = "10.20.0.0/24"
 	next, _ := m.updateGuidedScan("enter")
@@ -110,7 +147,7 @@ func TestBrowserTerminalRunsExistingNavigation(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		frame, _ := terminal.Frame()
-		if strings.Contains(ansi.Strip(frame), "Обзор проекта") {
+		if strings.Contains(ansi.Strip(frame), "Хосты") {
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -150,23 +187,24 @@ func TestGuidedSelectedActionAndStartRemainVisible(t *testing.T) {
 		t.Fatalf("create shortcut hidden: %s", text)
 	}
 	m.screen = "overview"
-	for i, label := range overviewActions {
-		m.overviewIndex = i
-		if text := ansi.Strip(m.View()); !strings.Contains(text, label) {
-			t.Fatalf("selected action %q hidden: %s", label, text)
-		}
+	if !strings.Contains(ansi.Strip(m.View()), "Хосты") {
+		t.Fatal("legacy overview did not use workspace")
 	}
 	m.screen = "guided-scan"
 	m.wizardStep = 2
 	m.wizardScope = "127.0.0.2 127.0.0.3"
 	for i := range guidedProfiles {
 		m.wizardProfile = i
-		if text := ansi.Strip(m.View()); !strings.Contains(text, "Запустить проверку") {
+		label := "Запустить проверку"
+		if i == 0 {
+			label = "Настроить порты"
+		}
+		if text := ansi.Strip(m.View()); !strings.Contains(text, label) {
 			t.Fatalf("start hidden for profile %d: %s", i, text)
 		}
 	}
 	m.openGuidedScan()
-	if len(m.current.Targets) > 0 && m.wizardIndex != 1 {
-		t.Fatal("existing scope should default to Continue")
+	if len(m.current.Targets) > 0 && m.wizardStep != 1 {
+		t.Fatal("existing scope should open scan choices")
 	}
 }

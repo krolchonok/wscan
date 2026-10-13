@@ -132,3 +132,25 @@ func TestSubnetJobResultOpensItsHostScope(t *testing.T) {
 		t.Fatalf("result opened wrong inventory: %s %s %v", m.screen, m.hostNetwork, m.hostOrder)
 	}
 }
+
+func TestMainHostsUsesDiscoveryResultsWorkspace(t *testing.T) {
+	m := workspaceFixture()
+	m.sidebarEnabled = true
+	m.width = 180
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	main := next.(model)
+	if main.screen != "desk" || main.hostNetwork != "" {
+		t.Fatal("Machines did not open the main workspace")
+	}
+	m.screen = "job-details"
+	m.jobs = []*job{{id: 1, projectID: m.current.ID, kind: jobDiscover, targets: []string{main.currentHost()}, status: statusDone}}
+	m.reconMenuFocus = true
+	next, _ = m.updateJobDetails("enter")
+	results := next.(model)
+	if results.screen != "desk" || results.reconMenuFocus {
+		t.Fatal("discovery results did not focus the shared workspace")
+	}
+	if main.viewDesk(150) != results.viewDesk(150) {
+		t.Fatal("main screen differs from the discovery results workspace")
+	}
+}

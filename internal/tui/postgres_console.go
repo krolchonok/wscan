@@ -307,7 +307,7 @@ func (m model) viewPG(w int) string {
 	} else if b.browser.mode != "" {
 		body += b.browser.render(w, m.panelRows()-3)
 	} else {
-		body += "1 пользователь · 2 базы · 3 таблицы · 4 столбцы · 5 строки\nEnter выбрать таблицу · b выбрать базу · c SQL только чтение · Esc закрыть\n:db · :tables · :columns public.table · :rows public.table [1–500] · :count public.table\n"
+		body += "1 пользователь · Enter таблицы · b базы · c SQL только чтение\n"
 		lines := strings.Split(ansi.Wrap(b.transcript, max(1, w-6), ""), "\n")
 		count := max(1, m.panelRows()-7)
 		lo := min(b.offset, max(0, len(lines)-count))

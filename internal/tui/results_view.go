@@ -102,8 +102,8 @@ func (m model) projectResultDetailLines(w int) []string {
 		}
 	default:
 		address := f.MatchedAt
-		if address == "" {
-			address = f.Target
+		if address == "" || len(strings.Fields(address)) > 1 {
+			address = projectResultLocation(f)
 		}
 		body = resultTitle(f) + "\n\n"
 		if credentials := findingCredentialSummary(f); credentials != "" {

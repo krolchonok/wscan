@@ -50,12 +50,14 @@ func CheckMS17010(parent context.Context, host string, port int, timeout time.Du
 		return false, fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
 
 	const (
-		cmdNegotiate   = 0x72
+		cmdNegotiate    = 0x72
 		cmdSessionSetup = 0x73
 		cmdTreeConnect  = 0x75
 		cmdTransaction  = 0x25
@@ -252,15 +254,15 @@ func smb1SessionSetupAnonymous(conn net.Conn, flags2 uint16, pid, mid uint16, se
 	ntlm := []byte{}
 	params := make([]byte, 0, 26)
 	params = append(params, 0xFF, 0x00)
-	params = append(params, le16(0)...)                  // ANDXOffset
-	params = append(params, le16(0xFFFF)...)              // MaxBufferSize
-	params = append(params, le16(1)...)                   // MaxMpxCount
-	params = append(params, le16(1)...)                   // VcNumber
-	params = append(params, le32(sessionKey)...)          // SessionKey
-	params = append(params, le16(uint16(len(lm)))...)     // OEMPasswordLen
-	params = append(params, le16(uint16(len(ntlm)))...)   // UnicodePasswordLen
-	params = append(params, le32(0)...)                   // Reserved
-	params = append(params, le32(0x00000050)...)          // Capabilities
+	params = append(params, le16(0)...)                 // ANDXOffset
+	params = append(params, le16(0xFFFF)...)            // MaxBufferSize
+	params = append(params, le16(1)...)                 // MaxMpxCount
+	params = append(params, le16(1)...)                 // VcNumber
+	params = append(params, le32(sessionKey)...)        // SessionKey
+	params = append(params, le16(uint16(len(lm)))...)   // OEMPasswordLen
+	params = append(params, le16(uint16(len(ntlm)))...) // UnicodePasswordLen
+	params = append(params, le32(0)...)                 // Reserved
+	params = append(params, le32(0x00000050)...)        // Capabilities
 	data := make([]byte, 0, len(lm)+len(ntlm)+24)
 	data = append(data, lm...)
 	data = append(data, ntlm...)
@@ -324,25 +326,25 @@ func smb1TreeConnectIPC(conn net.Conn, flags2 uint16, pid, mid, uid uint16, host
 func smb1PeekNamedPipeProbe(conn net.Conn, flags2 uint16, pid, mid, uid, tid uint16) (uint32, error) {
 	header := smb1Header(0x25, flags2, tid, pid, uid, mid)
 	params := make([]byte, 0, 40)
-	params = append(params, be16(0x0000)...) // Total Parameter count
-	params = append(params, be16(0x0000)...) // Total Data count
-	params = append(params, be16(0xFFFF)...) // Max Parameter count
-	params = append(params, be16(0xFFFF)...) // Max Data count
-	params = append(params, 0x00, 0x00)      // Max setup count, Reserved
-	params = append(params, be16(0x0000)...) // Flags
+	params = append(params, be16(0x0000)...)     // Total Parameter count
+	params = append(params, be16(0x0000)...)     // Total Data count
+	params = append(params, be16(0xFFFF)...)     // Max Parameter count
+	params = append(params, be16(0xFFFF)...)     // Max Data count
+	params = append(params, 0x00, 0x00)          // Max setup count, Reserved
+	params = append(params, be16(0x0000)...)     // Flags
 	params = append(params, be32(0x00000000)...) // Timeout
-	params = append(params, be16(0x0000)...)      // Reserved
-	params = append(params, be16(0x0000)...)      // ParameterCount
-	params = append(params, be16(0x4a00)...)      // ParameterOffset (malformed, deliberate)
-	params = append(params, be16(0x0000)...)      // DataCount
-	params = append(params, be16(0x4a00)...)      // DataOffset (malformed, deliberate)
-	params = append(params, 0x02, 0x00)           // SetupCount, Reserved
-	params = append(params, be16(0x2300)...)      // Setup[0]: PeekNamedPipe opcode
-	params = append(params, be16(0x0000)...)      // Setup[1]
-	params = append(params, be16(0x0700)...)      // BCC: length of "\PIPE\"
-	params = append(params, be16(0x5c50)...)      // "\P"
-	params = append(params, be16(0x4950)...)      // "IP"
-	params = append(params, be16(0x455c)...)      // "E\"
+	params = append(params, be16(0x0000)...)     // Reserved
+	params = append(params, be16(0x0000)...)     // ParameterCount
+	params = append(params, be16(0x4a00)...)     // ParameterOffset (malformed, deliberate)
+	params = append(params, be16(0x0000)...)     // DataCount
+	params = append(params, be16(0x4a00)...)     // DataOffset (malformed, deliberate)
+	params = append(params, 0x02, 0x00)          // SetupCount, Reserved
+	params = append(params, be16(0x2300)...)     // Setup[0]: PeekNamedPipe opcode
+	params = append(params, be16(0x0000)...)     // Setup[1]
+	params = append(params, be16(0x0700)...)     // BCC: length of "\PIPE\"
+	params = append(params, be16(0x5c50)...)     // "\P"
+	params = append(params, be16(0x4950)...)     // "IP"
+	params = append(params, be16(0x455c)...)     // "E\"
 
 	if err := smb1Send(conn, header, params, 0x10, nil); err != nil {
 		return 0, fmt.Errorf("send: %w", err)

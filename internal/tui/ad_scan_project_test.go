@@ -130,40 +130,55 @@ func TestADMissingCurrentProjectDoesNotCreateReplacement(t *testing.T) {
 	}
 }
 
-func TestADScanEntryFromProjectInteractions(t *testing.T) {
-	m := model{current: domain.Project{ID: 42, Name: "existing"}, screen: "networks", width: 110, height: 24}
-	m.openProjectInteractions()
-	if m.interactionIndex != interactionADScanIndex {
-		t.Fatal("AD action must be selected on project menu entry")
-	}
-	if !strings.Contains(m.viewInteractionMenu(100), "AD Scan") {
-		t.Fatal("project AD entry is not visible")
-	}
-	got, cmd := m.updateInteractionMenu("enter")
+func TestADScanHasSingleProjectEntry(t *testing.T) {
+	m := model{current: domain.Project{ID: 42, Name: "existing", Targets: []string{"192.0.2.10"}}, screen: "recon", width: 110, height: 24}
+	m.reconMenuIndex = 1
+	got, cmd := m.runReconAction()
 	m = got.(model)
-	if cmd != nil || m.screen != "ad-scan" || m.adScanNewProject || m.adScanRunning || len(m.jobs) != 0 {
-		t.Fatal("project entry must open AD setup with current destination without scanning")
+	if cmd != nil || m.screen != "ad-menu" {
+		t.Fatal("AD section missing")
 	}
-	got, _ = m.updateADScan("esc")
+	got, cmd = m.updateADMenu("enter")
 	m = got.(model)
-	if m.screen != "interaction-menu" {
-		t.Fatal("AD setup lost its return screen")
+	if cmd != nil || m.screen != "guided-scan" || m.wizardProfile != 1 || len(m.jobs) != 0 {
+		t.Fatal("AD entry must open setup without scanning")
 	}
-	got, _ = m.updateInteractionMenu("esc")
-	if got.(model).screen != "networks" {
-		t.Fatal("project entry lost its original return screen")
+	got, _ = m.updateGuidedScan("enter")
+	m = got.(model)
+	if m.wizardStep != 2 {
+		t.Fatal("AD setup should skip generic profile selection")
+	}
+	got, _ = m.updateGuidedScan("esc")
+	m = got.(model)
+	if m.wizardStep != 0 {
+		t.Fatal("AD back should return to scope")
 	}
 }
 
-func TestInteractionMenuEndShowsProjectActions(t *testing.T) {
-	m := model{width: 110, height: 24, screen: "interaction-menu"}
+func TestInteractionMenuDoesNotDuplicateAD(t *testing.T) {
+	m := model{width: 110, height: 40, screen: "interaction-menu"}
 	got, _ := m.updateInteractionMenu("end")
 	m = got.(model)
-	if m.interactionIndex != interactionMenuCount-1 || !strings.Contains(m.viewInteractionMenu(100), "AD Scan") {
-		t.Fatal("End did not reveal AD entry")
+	if m.interactionIndex != 11 || strings.Contains(m.viewInteractionMenu(100), "AD Scan") || strings.Contains(m.viewInteractionMenu(100), "Coerce / Responder") {
+		t.Fatal("AD duplicates remain in interaction tools")
 	}
 	got, _ = m.updateInteractionMenu("home")
 	if got.(model).interactionIndex != 0 {
-		t.Fatal("Home did not return to first entry")
+		t.Fatal("Home did not return to first tool")
+	}
+}
+
+func TestGenericScanProfilesDoNotDuplicateAD(t *testing.T) {
+	m := model{width: 110, height: 30, screen: "guided-scan", wizardStep: 1}
+	if strings.Contains(m.viewGuidedScan(100), "Аудит AD") {
+		t.Fatal("AD still shown in generic scan")
+	}
+	for i, profile := range scanProfileChoices {
+		m.wizardStep = 1
+		m.wizardIndex = i
+		got, _ := m.updateGuidedScan("enter")
+		if got.(model).wizardProfile != profile || profile == 1 {
+			t.Fatal("wrong generic scan profile")
+		}
 	}
 }

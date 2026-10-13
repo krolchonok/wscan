@@ -9,8 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const interactionCoerceIndex = 16
-
 type coerceRouteReady struct {
 	host, ip string
 	err      error
@@ -18,8 +16,8 @@ type coerceRouteReady struct {
 
 func (m model) openHostCoercion() (tea.Model, tea.Cmd) {
 	host := m.smbBrowser.host
-	if host == "" {
-		m.message = "Выбери машину (h)"
+	if host == "" && len(m.coercionTargets()) == 0 {
+		m.message = "Выбери машины для Coerce"
 		return m, nil
 	}
 	m.openADAccess()
@@ -30,6 +28,10 @@ func (m model) openHostCoercion() (tea.Model, tea.Cmd) {
 	if len(m.adAccessCreds) == 1 {
 		m.adAccessCred = 0
 		m.adAccessDomain = m.adAccessCreds[0].Domain
+	}
+	if host == "" {
+		m.message = "Цели: выбранные машины проекта. Укажите адрес приёмника."
+		return m, nil
 	}
 	if m.adCoerceCallback == "" || m.coerceCallbackAuto {
 		m.adCoerceCallback = ""
@@ -101,9 +103,11 @@ func (m model) updateCoercionSetup(key string) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.screen = m.adAccessReturn
 	case "up", "k":
-		m.coerceActionIndex = (m.coerceActionIndex + 4) % 5
+		m.coerceActionIndex = (m.coerceActionIndex + 5) % 6
 	case "down", "j", "tab":
-		m.coerceActionIndex = (m.coerceActionIndex + 1) % 5
+		m.coerceActionIndex = (m.coerceActionIndex + 1) % 6
+	case "h":
+		m.startInput("ad-access-host")
 	case "r":
 		m.startInput("ad-coerce-callback")
 	case "d":
@@ -126,6 +130,9 @@ func (m model) updateCoercionSetup(key string) (tea.Model, tea.Cmd) {
 			return m.startCoercion()
 		case 3:
 			return m.updateADAccess("c")
+		case 5:
+			m.startInput("ad-access-host")
+			m.input = m.adAccessHost
 		case 4:
 			m.startInput("ad-coerce-callback")
 		}
@@ -142,13 +149,13 @@ func (m model) viewCoercionSetup(w int) string {
 	if m.coerceCallbackAuto {
 		origin = "эта машина, адрес по маршруту к цели"
 	}
-	body := headingStyle.Render("Coerce / Responder") + fmt.Sprintf("\n\nЦель: %s · TCP/445\nПриёмник: %s:445 · %s · r изменить\nУчётка: %s\nДомен учётки: %s · d изменить (для локальной можно оставить пустым)\nResponder: %s\n\n", m.adAccessHost, receiver, origin, cred, valueOr(m.adAccessDomain, "не задан"), m.responderStatus())
+	body := headingStyle.Render("Coerce / Responder") + fmt.Sprintf("\n\nЦель: %s · TCP/445\nПриёмник: %s:445 · %s · r изменить\nУчётка: %s\nДомен учётки: %s · d изменить (для локальной можно оставить пустым)\nResponder: %s\n\n", valueOr(m.adAccessHost, fmt.Sprintf("выбранные машины проекта (%d)", len(m.coercionTargets()))), receiver, origin, cred, valueOr(m.adAccessDomain, "не задан"), m.responderStatus())
 	body += fmt.Sprintf("Диагностика SMB/NTLM: %t · v переключить · журнал: g → Responder → r\n\n", m.responderDebug)
 	responderAction := "Запустить Responder на этой машине"
 	if j := m.jobByID(m.adResponderJobID); j != nil && j.status == statusRunning {
 		responderAction = "Остановить Responder и сохранить события"
 	}
-	rows := []string{responderAction, "Проверить Coerce (приёмник включится автоматически, если не запущен)", "Проверить доступность RPC без Coerce", "Выбрать учётку", "Изменить адрес приёмника"}
+	rows := []string{responderAction, "Проверить Coerce (приёмник включится автоматически, если не запущен)", "Проверить доступность RPC без Coerce", "Выбрать учётку", "Изменить адрес приёмника", "Изменить цели (пусто — выбор проекта)"}
 	for i, row := range rows {
 		body += renderListRow(row, i == m.coerceActionIndex, w)
 	}

@@ -238,11 +238,12 @@ func opensslRandBytes(L *lua.LState) int {
 	return 1
 }
 
-// Minimal DES/AES helpers used by SMB auth paths.
+// Nmap uses encrypt/decrypt(cipher, key, iv, data[, padding]). SMB's DES
+// calls pass a nil IV; it is not the key or the input data.
 func opensslEncrypt(L *lua.LState) int {
 	algo := stringsToLower(L.CheckString(1))
-	data := []byte(L.CheckString(2))
-	key := []byte(L.CheckString(3))
+	key := []byte(L.CheckString(2))
+	data := []byte(L.CheckString(4))
 	switch {
 	case stringsHasPrefix(algo, "des"):
 		for len(key) < 8 {
@@ -270,8 +271,8 @@ func opensslEncrypt(L *lua.LState) int {
 
 func opensslDecrypt(L *lua.LState) int {
 	algo := stringsToLower(L.CheckString(1))
-	data := []byte(L.CheckString(2))
-	key := []byte(L.CheckString(3))
+	key := []byte(L.CheckString(2))
+	data := []byte(L.CheckString(4))
 	switch {
 	case stringsHasPrefix(algo, "des"):
 		for len(key) < 8 {

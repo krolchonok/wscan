@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"wscan/internal/app"
 )
 
@@ -13,7 +14,16 @@ func (m *model) addSharedJob(s app.Job) *job {
 	id := s.ID
 	j := &job{id: id, projectID: s.ProjectID, kind: s.Kind, label: s.Label, targets: append([]string(nil), s.Targets...), scope: s.Scope, status: statusRunning, started: s.Started, options: append([]string(nil), s.Options...), checks: append([]string(nil), s.Checks...), cancel: func() { _ = m.shared.Jobs.Cancel(id) }}
 	m.jobSeq = max(m.jobSeq, id)
-	m.jobs = append(m.jobs, j)
+	// Restored snapshots arrive newest first; keep the TUI list in numeric
+	// order and retain the selected task when an older snapshot is inserted.
+	count := len(m.jobs)
+	index := sort.Search(count, func(i int) bool { return m.jobs[i].id >= id })
+	m.jobs = append(m.jobs, nil)
+	copy(m.jobs[index+1:], m.jobs[index:count])
+	m.jobs[index] = j
+	if m.jobIndex >= 0 && m.jobIndex < count && index <= m.jobIndex {
+		m.jobIndex++
+	}
 	return j
 }
 func (m *model) syncSharedJobs() {
@@ -30,6 +40,10 @@ func (m *model) syncSharedJobs() {
 		}
 		j.sharedRevision = snapshot.Revision
 		j.scope = snapshot.Scope
+		j.checkErrors = nil
+		if snapshot.CheckErrors != nil {
+			j.checkErrors = append([]string{}, snapshot.CheckErrors...)
+		}
 		j.options = append([]string(nil), snapshot.Options...)
 		j.checks = append([]string(nil), snapshot.Checks...)
 		if snapshot.Status == "running" || snapshot.Status == "cancelling" {
