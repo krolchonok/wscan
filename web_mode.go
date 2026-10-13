@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -40,7 +41,7 @@ func webMode(args []string) (bool, bool, string, error) {
 func runWeb(s *storage.Store, c *catalog.Catalog, e *engine.Engine, dir string, tuiMode bool, address string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	service, err := app.NewService(ctx, s, c, e)
+	service, err := app.NewService(ctx, s, c, e, filepath.Join(dir, "exports", "ad"))
 	if err != nil {
 		return err
 	}

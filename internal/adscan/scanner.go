@@ -417,8 +417,12 @@ func rootDSE(ctx context.Context, address string, port int) rootDSEInfo {
 	return rootDSEAt(ctx, address, port, port == 636 || port == 3269)
 }
 
-func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootDSEInfo {
+func rootDSEAt(ctx context.Context, address string, port int, secure bool, collectUsers ...bool) rootDSEInfo {
 	var info rootDSEInfo
+	if err := ctx.Err(); err != nil {
+		info.Message = err.Error()
+		return info
+	}
 	queryCtx, cancel := context.WithTimeout(ctx, ldapQueryLimit)
 	defer cancel()
 	scheme := "ldap"
@@ -427,6 +431,9 @@ func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootD
 	}
 	server := url.URL{Scheme: scheme, Host: net.JoinHostPort(address, fmt.Sprint(port))}
 	dialer := &net.Dialer{Timeout: ldapQueryLimit}
+	if deadline, ok := queryCtx.Deadline(); ok {
+		dialer.Deadline = deadline
+	}
 	// Reconnaissance must work with private/self-signed directory certificates;
 	// this unauthenticated probe never sends user credentials.
 	conn, err := ldap.DialURL(server.String(), ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: true}))
@@ -474,13 +481,27 @@ func rootDSEAt(ctx context.Context, address string, port int, secure bool) rootD
 		info.Message = "LDAP открыт; домен не раскрыт"
 	} else {
 		info.Message = "RootDSE прочитан анонимно"
-		info.Users, info.ASREPUsers, info.SPNUsers,
-			info.PasswordNotRequiredUsers, info.PasswordNeverExpiresUsers,
-			info.DelegationUsers, info.ReversibleEncryptionUsers,
-			info.DESOnlyUsers, info.AdminCountUsers, info.Message = anonymousLDAPUsers(conn, dn)
-		info.Message = "RootDSE прочитан анонимно; " + info.Message
+		if len(collectUsers) == 0 || collectUsers[0] {
+			info.Users, info.ASREPUsers, info.SPNUsers,
+				info.PasswordNotRequiredUsers, info.PasswordNeverExpiresUsers,
+				info.DelegationUsers, info.ReversibleEncryptionUsers,
+				info.DESOnlyUsers, info.AdminCountUsers, info.Message = anonymousLDAPUsers(conn, dn)
+			info.Message = "RootDSE прочитан анонимно; " + info.Message
+		}
 	}
 	return info
+}
+
+// DiscoverLDAPIdentity reads only RootDSE, without binding or user enumeration.
+func DiscoverLDAPIdentity(ctx context.Context, address string, port int) (Host, error) {
+	info := rootDSEAt(ctx, address, port, port == 636 || port == 3269, false)
+	if err := ctx.Err(); err != nil {
+		return Host{}, err
+	}
+	if !info.DCConfirmed {
+		return Host{}, fmt.Errorf("%s: AD DS не подтверждён; %s", address, info.Message)
+	}
+	return Host{Address: address, Ports: []int{port}, HostName: info.HostName, Domain: info.Domain, DCConfirmed: info.DCConfirmed, Identity: info.Identity, LDAPMessage: info.Message}, nil
 }
 
 func anonymousLDAPUsers(conn *ldap.Conn, baseDN string) (users, asrepUsers, spnUsers, passwordNotRequired, passwordNeverExpires, delegation, reversibleEncryption, desOnly, adminCount []string, message string) {

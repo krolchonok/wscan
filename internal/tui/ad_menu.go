@@ -2,12 +2,15 @@ package tui
 
 import tea "github.com/charmbracelet/bubbletea"
 
-var adMenuActions = []string{"Разведка AD", "Учётки, Kerberos, SYSVOL", "Coerce / Responder", "Выбрать машину"}
+var adMenuActions = []string{"Разведка AD", "Учётки, Kerberos, SYSVOL", "Coerce / Responder", "Контроллер домена: выбрать машину"}
 
 func (m model) viewADMenu(w int) string {
 	body := headingStyle.Render("AD") + "\n\n"
 	if m.currentHost() != "" {
 		body += "Машина: " + m.currentHost() + "\n\n"
+	}
+	if m.adAccessManualHost != "" {
+		body += "Контроллер: " + m.adAccessManualHost + " (вручную)\n\n"
 	}
 	for i, label := range adMenuActions {
 		body += renderListRow(label, i == m.adMenuIndex, w-4)
@@ -33,16 +36,16 @@ func (m model) updateADMenu(key string) (tea.Model, tea.Cmd) {
 			}
 		case 1:
 			m.openADAccess()
-			m.adAccessHost = m.currentHost()
+			return m, m.detectADAccessIdentityCmd()
 		case 2:
 			m.openInteractionMenu()
 			m.interactionReturn = "ad-menu"
 			m.screen = "ad-menu"
 			return m.openHostCoercion()
 		case 3:
-			m.interactionReturn = "ad-menu"
-			m.interactionHostIndex = 0
-			m.screen = "interaction-targets"
+			m.openADAccess()
+			m.screen = "ad-menu"
+			m.openADControllerPicker()
 		}
 	}
 	return m, nil

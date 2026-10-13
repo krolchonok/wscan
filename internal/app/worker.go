@@ -44,7 +44,10 @@ type Worker struct {
 	services         []domain.Service
 	adScanNewProject bool
 	adScanDNS        adscan.DNSOptions
+	adExportDir      string
 }
+
+func (m Worker) WithADExportDir(dir string) Worker { m.adExportDir = dir; return m }
 
 func NewWorker(s *storage.Store, c *catalog.Catalog, scan *engine.Engine, p domain.Project, entries []catalog.Entry, services []domain.Service, newProject bool, dns adscan.DNSOptions) Worker {
 	p.Targets = append([]string(nil), p.Targets...)

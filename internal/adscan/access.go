@@ -18,14 +18,19 @@ import (
 	"wscan/internal/domain"
 )
 
-// AccessOptions is a single explicitly chosen action against one controller.
-// Directory inspection never requests tickets, triggers RPC or changes AD.
+// AccessOptions describes an explicitly chosen AD action. AS-REP may locate
+// the KDC through DNS and uses Users without attempting password authentication.
 type AccessOptions struct {
 	Host, Domain, Mode string
 	LDAPPort           int
 	Credential         domain.Credential
 	ExportDir          string
 	MaxObjects         int
+	Users              []string
+	DNS                DNSOptions
+	RPS                int
+	Timeout            time.Duration
+	Progress           func(string)
 }
 
 type AccessCheck struct {
@@ -41,6 +46,7 @@ type AccessObject struct {
 }
 type AccessReport struct {
 	Host      string         `json:"host"`
+	Endpoint  string         `json:"endpoint,omitempty"`
 	Mode      string         `json:"mode"`
 	Checks    []AccessCheck  `json:"checks"`
 	Objects   []AccessObject `json:"objects,omitempty"`
@@ -102,6 +108,9 @@ func validateAccess(o *AccessOptions) error {
 
 func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	r := AccessReport{Host: o.Host, Mode: o.Mode}
+	if o.Mode == "asrep" {
+		return kerberosAccess(ctx, o)
+	}
 	if err := validateAccess(&o); err != nil {
 		return r, err
 	}
@@ -114,8 +123,6 @@ func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 		return r, fmt.Errorf("password spray не включён: он может блокировать учётные записи")
 	case "ldap-security":
 		return ldapSecurity(ctx, o)
-	case "asrep":
-		return kerberosAccess(ctx, o)
 	case "user-enum", "kerberoast", "pre2k":
 		return r, fmt.Errorf("этот Kerberos-режим отключён; смотри read-only кандидаты в LDAP-аудите")
 	case "sysvol":

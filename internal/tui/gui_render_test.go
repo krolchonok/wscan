@@ -11,6 +11,8 @@ import (
 
 func TestGUIScreensFitAfterResize(t *testing.T) {
 	screens := []string{"recon", "recon-host-menu", "projects", "desk", "networks", "jobs", "job-details", "history", "project-results", "finding-details", "interaction-menu", "interaction-targets", "smb-setup", "smb-browser", "ftp-setup", "ftp-browser", "winrm-setup", "winrm-browser", "winrm-shell", "pg-setup", "pg-console", "mysql-setup", "mysql-console", "mssql-setup", "mssql-console", "mssql-actions", "mssql-xp-confirm", "web-discovery", "web-wordlists", "sqli-form", "file-upload", "lfi-audit", "ssh-dictionary", "ssh-password-lists", "kyocera-book", "coerce-setup", "ad-access", "ad-scan", "coerce-port-check", "coerce-port-confirm", "coerce-port-stopping", "service-inventory", "host-selection", "host-port-selection", "action-menu", "disc-options", "scan-review", "catalog", "catalog-groups", "global-settings", "settings", "speed-presets", "library-settings", "dependency-settings", "dependency-install-confirm", "credentials", "cred-add-type", "cred-delete-confirm", "project-delete-confirm", "delete-confirm", "repair-target", "input", "help", "code-exec-confirm", "exploit-confirm", "credential-attack-confirm", "spray-setup", "spray-running", "spray-results", "spray-module-picker", "spray-module-result"}
+	screens = append(screens, "asrep-setup")
+	screens = append(screens, "ad-controller-picker")
 	for _, screen := range screens {
 		t.Run(screen, func(t *testing.T) {
 			m := newTestModelForSettings(t)

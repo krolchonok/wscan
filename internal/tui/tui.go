@@ -170,11 +170,23 @@ type model struct {
 	adBloodHoundPort, adBloodHoundLimit              int
 	adAccessHost                                     string
 	adAccessDomain                                   string
+	adAccessLDAPPort                                 int
+	adAccessGeneration                               int
+	adAccessAutoBusy                                 bool
+	adAccessHint                                     string
+	adAccessAutoHost                                 string
+	adAccessManualHost                               string
+	adControllerReturn                               string
+	adControllerIndex                                int
+	adAccessNodes                                    []adscan.Host
+	adAccessNodesProject                             int64
 	adCoerceCallback                                 string
 	adAccessIndex                                    int
 	adAccessCreds                                    []domain.Credential
 	adAccessCred                                     int
 	adAccessJobID                                    int
+	adASREPIndex                                     int
+	adASREPUsers                                     string
 	adResponderJobID                                 int
 	responderDebug                                   bool
 	coerceActionIndex                                int
@@ -286,7 +298,7 @@ type model struct {
 }
 
 func Run(ctx context.Context, s *storage.Store, c *catalog.Catalog, scan *engine.Engine, dir string) (runErr error) {
-	service, err := app.NewService(ctx, s, c, scan)
+	service, err := app.NewService(ctx, s, c, scan, filepath.Join(dir, "exports", "ad"))
 	if err != nil {
 		return err
 	}
@@ -348,6 +360,11 @@ func (m model) findProject(id int64) domain.Project {
 // openProject loads a project onto the desk: history, inventory, jobs view.
 func (m *model) openProject(p domain.Project) {
 	m.current = p
+	m.adAccessGeneration++
+	m.adAccessAutoBusy = false
+	m.adAccessNodes, m.adAccessNodesProject = nil, 0
+	m.adAccessHost, m.adAccessDomain, m.adAccessAutoHost, m.adAccessHint = "", "", "", ""
+	m.loadADControllerSelection()
 	m.selectedHosts = nil
 	m.selectedNetworks = nil
 	m.hostNetwork = ""
@@ -429,7 +446,7 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// case impossible to save. Every other action still treats empty
 		// input as "cancel this step".
 		isCred := strings.HasPrefix(action, "cred-")
-		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
+		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "asrep-users" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
 			return m, nil
 		}
 		switch action {
@@ -798,8 +815,21 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adBloodHoundLimit = limit
 			m.screen = "ad-access"
 		case "ad-access-host":
+			if m.inputReturn != "coerce-setup" {
+				if err := m.setADController(value); err != nil {
+					m.message = err.Error()
+					return m, nil
+				}
+				return m, m.detectADAccessIdentityCmd()
+			}
+			m.adAccessGeneration++
+			m.adAccessAutoBusy, m.adAccessHint = false, ""
+			m.adAccessAutoHost = ""
 			m.adAccessHost = value
-			m.screen = "ad-access"
+			m.screen = "coerce-setup"
+		case "asrep-users":
+			m.adASREPUsers = value
+			m.screen = "asrep-setup"
 		case "ad-coerce-callback":
 			m.adCoerceCallback = value
 			m.coerceCallbackAuto = false
@@ -808,10 +838,25 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.screen = "coerce-setup"
 			}
 		case "ad-access-domain":
+			m.adAccessGeneration++
+			m.adAccessAutoBusy, m.adAccessHint = false, ""
+			m.adAccessAutoHost = ""
 			m.adAccessDomain = value
+			if m.inputReturn != "coerce-setup" && m.adAccessManualHost != "" {
+				m.adAccessHost = m.adAccessManualHost
+				if err := m.store.SetADController(m.ctx, m.current.ID, m.adAccessManualHost, value); err != nil {
+					m.message = err.Error()
+				}
+			} else if m.inputReturn != "coerce-setup" && m.adAccessNodesProject == m.current.ID {
+				m.adAccessHost = ""
+				m.chooseADAccessIdentity(m.adAccessNodes)
+			}
 			m.screen = "ad-access"
 			if m.inputReturn == "coerce-setup" {
 				m.screen = "coerce-setup"
+			}
+			if m.inputReturn == "asrep-setup" {
+				m.screen = "asrep-setup"
 			}
 		case "add-target", "add-network":
 			if !utf8.ValidString(value) {

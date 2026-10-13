@@ -141,6 +141,11 @@ feed:
 	if err := ctx.Err(); err != nil {
 		return nil, failures, err
 	}
+	// Resolver/socket deadlines can fire before the parent's cancellation
+	// callback runs. An expired parent deadline must not become nil success.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return nil, failures, context.DeadlineExceeded
+	}
 	seen := map[string]bool{}
 	unique := records[:0]
 	for _, record := range records {

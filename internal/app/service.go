@@ -21,20 +21,25 @@ import (
 )
 
 type Service struct {
-	Store     *storage.Store
-	Catalog   *catalog.Catalog
-	Scanner   *engine.Engine
-	Jobs      *Manager
-	entriesMu sync.Mutex
-	entries   []catalog.Entry
+	Store       *storage.Store
+	Catalog     *catalog.Catalog
+	Scanner     *engine.Engine
+	Jobs        *Manager
+	entriesMu   sync.Mutex
+	entries     []catalog.Entry
+	adExportDir string
 }
 
-func NewService(ctx context.Context, s *storage.Store, c *catalog.Catalog, e *engine.Engine) (*Service, error) {
+func NewService(ctx context.Context, s *storage.Store, c *catalog.Catalog, e *engine.Engine, adExportDir ...string) (*Service, error) {
 	m, err := NewManager(ctx, s)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Store: s, Catalog: c, Scanner: e, Jobs: m}, nil
+	service := &Service{Store: s, Catalog: c, Scanner: e, Jobs: m}
+	if len(adExportDir) > 0 {
+		service.adExportDir = adExportDir[0]
+	}
+	return service, nil
 }
 func (s *Service) Close() { s.Jobs.Close() }
 func (s *Service) Project(ctx context.Context, id int64) (domain.Project, error) {
@@ -187,7 +192,7 @@ func (s *Service) StartScan(ctx context.Context, r ScanRequest, source, key stri
 	if r.Spec.Label == "" {
 		r.Spec.Label = operationLabel(r.Spec.Kind)
 	}
-	worker := NewWorker(s.Store, s.Catalog, s.Scanner, p, entries, inventory.Services, r.NewProject, r.DNS)
+	worker := NewWorker(s.Store, s.Catalog, s.Scanner, p, entries, inventory.Services, r.NewProject, r.DNS).WithADExportDir(s.adExportDir)
 	if r.Spec.Kind == "checks" && len(worker.knownServices(r.Spec.Hosts)) == 0 {
 		return Job{}, fmt.Errorf("нет известных сервисов: сначала запустите Поиск портов и сервисов")
 	}

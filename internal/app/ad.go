@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -164,6 +165,10 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 				Risk:     "Анонимная проверка RootDSE; отсутствие данных не означает отсутствия AD.",
 				Time:     time.Now().UTC(),
 			}
+			// Preserve complete names/realm for follow-up checks after restart.
+			if raw, err := json.Marshal(node); err == nil {
+				finding.Response = string(raw)
+			}
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
 				return result, &details, projectID, projectName, err
@@ -176,6 +181,9 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 				facts = append(facts, fact.Kind+": "+fact.Value+" · источник: "+fact.Source)
 			}
 			finding := adEvidenceFinding(cidr, node.Address, "identity", "Идентификация узла и источники", strings.Join(facts, "\n"), "DNS-объявление сервиса и имя узла не подтверждают роль DC; противоречащие сведения сохраняются с источниками.")
+			if raw, err := json.Marshal(node); err == nil {
+				finding.Response = string(raw)
+			}
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
 				return result, &details, projectID, projectName, err
@@ -191,7 +199,7 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 			result.Findings = append(result.Findings, finding)
 		}
 		if len(node.ASREPUsers) > 0 {
-			finding := adEvidenceFinding(cidr, node.Address, "asrep-candidates", "Учётные записи без Kerberos pre-auth", accountSample(node.ASREPUsers), "Эти учётные записи допускают проверку AS-REP Roasting. Сканер сохраняет только имена и не запрашивает хеши.")
+			finding := adEvidenceFinding(cidr, node.Address, "asrep-candidates", "Учётные записи без Kerberos pre-auth", accountSample(node.ASREPUsers), "LDAP-кандидаты; результат запроса AS-REP к KDC сохраняется отдельной проверкой.")
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
 				return result, &details, projectID, projectName, err
@@ -252,6 +260,24 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 		result.Findings = append(result.Findings, finding)
 	}
 	checks, checkErrors := m.runADNSEChecks(ctx, details.Hosts, emit)
+	asrep := m.runADASREP(ctx, details, projectID, runID, emit)
+	// Persist hashes before later Windows checks, including partial cancellation.
+	saveCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		saveCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+	for _, finding := range asrep.Findings {
+		if err := m.store.SaveFinding(saveCtx, runID, finding); err != nil {
+			status = "failed"
+			return result, &details, projectID, projectName, err
+		}
+		result.Findings = append(result.Findings, finding)
+	}
+	checkErrors = append(checkErrors, asrep.Errors...)
+	result.Skipped = append(result.Skipped, asrep.Skipped...)
+	details.Diagnostics = append(details.Diagnostics, asrep.Skipped...)
 	windows := m.runADWindowsChecks(ctx, details.Hosts, emit, checks)
 	checks = append(checks, windows.Findings...)
 	checkErrors = append(checkErrors, windows.Errors...)
@@ -261,13 +287,13 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 	for _, skipped := range windows.Skipped {
 		emit("Пропуск: " + skipped)
 	}
+	result.Errors = append(result.Errors, checkErrors...)
 	if ctx.Err() != nil {
 		status = "cancelled"
 		return result, &details, projectID, projectName, ctx.Err()
 	}
-	result.Errors = append(result.Errors, checkErrors...)
 	for _, scanErr := range checkErrors {
-		emit("Некоторые SMB/RDP-проверки завершились с ошибкой: " + scanErr)
+		emit("Ошибка AD-проверки: " + scanErr)
 	}
 	for _, finding := range checks {
 		if err := m.store.SaveFinding(ctx, runID, finding); err != nil {

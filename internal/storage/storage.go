@@ -135,6 +135,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS ad_controller_selection(project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,host TEXT NOT NULL,domain TEXT NOT NULL DEFAULT '')`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }

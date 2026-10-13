@@ -149,6 +149,10 @@ func (m model) View() string {
 		body = m.viewCoercionSetup(w)
 	case "ad-access":
 		body = m.viewADAccess(w)
+	case "asrep-setup":
+		body = m.viewASREPSetup(w)
+	case "ad-controller-picker":
+		body = m.viewADControllerPicker(w)
 	case "host-port-selection":
 		body = m.viewHostPortSelection(w)
 	case "host-selection":
@@ -286,7 +290,11 @@ func (m model) footer() string {
 	case "coerce-port-confirm":
 		return "Enter / y остановить владельца порта · Esc / n отменить"
 	case "ad-access":
-		return "↑/↓ проверка · Enter запуск · c учётка · h хост · r приёмник · p Responder · Esc назад/отмена"
+		return "↑/↓ проверка · Enter запуск · c учётка · h контроллер · r приёмник · p Responder · Esc назад/отмена"
+	case "asrep-setup":
+		return "↑/↓ пункт · Enter выбрать · ← назад · x остановить"
+	case "ad-controller-picker":
+		return "↑/↓ машина · Enter выбрать контроллер · ← назад"
 	case "interaction-targets":
 		return "↑/↓ машина · Enter выбрать · Esc назад"
 	case "mysql-setup", "pg-setup":
@@ -1110,6 +1118,12 @@ func (m model) viewInput(w int) string {
 	}
 	if m.inputAction == "setting-value" {
 		label = settingLabels[m.settingsIndex]
+	}
+	if m.inputAction == "asrep-users" {
+		label = "Имена или @/путь/users.txt (Enter — автоматически)"
+	}
+	if m.inputAction == "ad-access-host" && m.inputReturn == "asrep-setup" {
+		label = "KDC: IP/DNS (Enter — автоматически)"
 	}
 	if m.inputAction == "disc-setting-value" {
 		label = "Проб/сек (0 — без лимита)"

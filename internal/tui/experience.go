@@ -51,6 +51,9 @@ func (m model) actionRows() []actionRow {
 // a jobEvent message flows back in.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case adAccessIdentityDetected:
+		m.applyADAccessIdentity(x)
+		return m, nil
 	case webBrowserOpened:
 		m.message = webOpenMessage(x.err)
 		return m, nil
@@ -440,6 +443,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCoercionSetup(key)
 		case "ad-access":
 			return m.updateADAccess(key)
+		case "asrep-setup":
+			return m.updateASREPSetup(key)
+		case "ad-controller-picker":
+			return m.updateADControllerPicker(key)
 		case "host-port-selection":
 			return m.updateHostPortSelection(key)
 		case "host-selection":

@@ -21,7 +21,7 @@ var adAccessModes = []struct{ id, name string }{
 	{"coercion-discovery", "Coerce: проверить доступность RPC-интерфейсов машин TCP/445"},
 	{"coercion", "Coerce: машины TCP/445 → локальный SMB-приёмник (5 RPC-методов)"},
 	{"directory", "LDAP-аудит: учётки, политики, delegation, trusts, LAPS, gMSA, AD CS"},
-	{"asrep", "AS-REP: LDAP-кандидаты DONT_REQ_PREAUTH (без запроса билета)"},
+	{"asrep", "AS-REP без пароля → Hashcat"},
 	{"sysvol", "SYSVOL / NETLOGON: обнаружение устаревших GPP cpassword (без чтения паролей)"},
 	{"ldap-security", "LDAP signing / LDAPS channel binding: проба с выбранной учёткой"},
 	{"bloodhound-ce", "BloodHound CE: удалённый сбор домена → ZIP (LDAP, без агента)"},
@@ -32,6 +32,12 @@ func (m *model) openADAccess() {
 	m.adAccessHost, m.adAccessDomain = "", ""
 	m.adAccessIndex, m.adAccessCred = 2, -1
 	m.adBloodHoundPort, m.adBloodHoundLimit = 636, 5000
+	m.adAccessLDAPPort = 636
+	m.adAccessGeneration++
+	m.adAccessAutoBusy, m.adAccessHint = false, ""
+	m.adAccessAutoHost = ""
+	m.loadADControllerSelection()
+	m.prefillADAccessIdentity()
 	creds, err := m.store.ListCredentials(m.ctx, m.current.ID)
 	if err == nil {
 		m.adAccessCreds = creds
@@ -78,11 +84,12 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 			m.startInput("ad-bloodhound-limit")
 		}
 	case "h":
-		m.startInput("ad-access-host")
+		m.openADControllerPicker()
 	case "r":
 		m.startInput("ad-coerce-callback")
 	case "d":
 		m.startInput("ad-access-domain")
+		m.input = m.adAccessDomain
 	case "c":
 		if len(m.adAccessCreds) == 0 {
 			m.message = "В проекте нет сохранённых учёток; нажми c в окне Credentials, затем вернись сюда"
@@ -99,6 +106,14 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "enter":
+		if m.adAccessAutoBusy {
+			m.message = "Определяю домен…"
+			return m, nil
+		}
+		if adAccessModes[m.adAccessIndex].id == "asrep" {
+			m.openASREPSetup()
+			return m, nil
+		}
 		return m.startADAccess()
 	}
 	return m, nil
@@ -115,7 +130,15 @@ func (m model) viewADAccess(w int) string {
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = credIdentLabel(m.adAccessCreds[m.adAccessCred])
 	}
-	body += fmt.Sprintf("Хост: %s · h изменить\nДомен: %s · d изменить\nУчётка: %s · c выбрать сохранённую\n\n", valueOr(m.adAccessHost, "не задан"), valueOr(m.adAccessDomain, "не задан"), cred)
+	domainLabel := valueOr(m.adAccessDomain, "не задан")
+	if m.adAccessAutoBusy && m.adAccessDomain == "" {
+		domainLabel = "определяется…"
+	}
+	body += fmt.Sprintf("Контроллер: %s · h выбрать из машин\nДомен: %s · d изменить\nУчётка: %s · c выбрать сохранённую\n", valueOr(m.adAccessHost, "не задан"), domainLabel, cred)
+	if m.adAccessHint != "" {
+		body += m.adAccessHint + "\n"
+	}
+	body += "\n"
 	if strings.HasPrefix(adAccessModes[m.adAccessIndex].id, "coercion") {
 		scope := "выбранные машины с 445, иначе все с 445; h — один хост"
 		if m.adAccessHost != "" {
@@ -149,12 +172,19 @@ func valueOr(v, empty string) string {
 }
 
 func (m model) startADAccess() (tea.Model, tea.Cmd) {
+	if m.adAccessAutoBusy {
+		m.message = "Определяю домен…"
+		return m, nil
+	}
 	if m.current.ID == 0 {
 		m.message = "Сначала открой проект"
 		return m, nil
 	}
 	if strings.HasPrefix(adAccessModes[m.adAccessIndex].id, "coercion") {
 		return m.startCoercion()
+	}
+	if adAccessModes[m.adAccessIndex].id == "asrep" {
+		return m.startASREP()
 	}
 	if strings.TrimSpace(m.adAccessHost) == "" || strings.TrimSpace(m.adAccessDomain) == "" {
 		m.message = "Укажи хост контроллера (h) и домен (d)"
@@ -165,7 +195,11 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = m.adAccessCreds[m.adAccessCred]
 	}
-	o := adscan.AccessOptions{Host: strings.TrimSpace(m.adAccessHost), Domain: strings.TrimSpace(m.adAccessDomain), Mode: mode, Credential: cred, LDAPPort: 636, MaxObjects: 5000, ExportDir: filepath.Join(m.appDir, "exports", "ad")}
+	port := m.adAccessLDAPPort
+	if port != 389 && port != 636 {
+		port = 636
+	}
+	o := adscan.AccessOptions{Host: strings.TrimSpace(m.adAccessHost), Domain: strings.TrimSpace(m.adAccessDomain), Mode: mode, Credential: cred, LDAPPort: port, MaxObjects: 5000, ExportDir: filepath.Join(m.appDir, "exports", "ad")}
 	if mode == "bloodhound-ce" {
 		if cred.Username == "" {
 			m.message = "Выбери доменную учётку (c): BloodHound не собирается анонимно"
@@ -182,6 +216,9 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 }
 
 func (m model) runADAccess(o adscan.AccessOptions) runFunc {
+	if o.Mode == "asrep" {
+		return m.runASREP(o)
+	}
 	return func(ctx context.Context, emit progressReporter) (engine.Result, error) {
 		emit("AD " + o.Mode + ": " + o.Host)
 		runID, err := m.store.StartRun(ctx, m.current.ID)

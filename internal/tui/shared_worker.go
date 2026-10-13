@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 	"wscan/internal/adscan"
 	"wscan/internal/app"
@@ -22,7 +23,7 @@ func (m model) sharedWorker() app.Worker {
 			services = append(services, m.inventory[h].services...)
 		}
 	}
-	return app.NewWorker(m.store, m.cat, m.scanner, m.current, m.entries, services, m.adScanNewProject, m.adScanDNS)
+	return app.NewWorker(m.store, m.cat, m.scanner, m.current, m.entries, services, m.adScanNewProject, m.adScanDNS).WithADExportDir(filepath.Join(m.appDir, "exports", "ad"))
 }
 func sharedSpec(s launchSpec) app.Spec {
 	return app.Spec{Kind: s.kind, Label: s.label, Hosts: s.hosts, TemplateIDs: s.templateIDs, Service: s.service, Services: s.services, DNSServer: s.dnsServer, DiscPorts: s.discPorts, DiscUDPPorts: s.discUDPPorts, DiscAllPorts: s.discAllPorts, DiscSkipTCP: s.discSkipTCP, DiscNoVersion: s.discNoVersion, DiscOnlyKnown: s.discOnlyKnown, DiscNoPing: s.discNoPing}
