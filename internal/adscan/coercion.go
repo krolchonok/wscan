@@ -24,6 +24,7 @@ import (
 // CoercionOptions uses named-pipe RPC over TCP/445. Callback is a reachable IPv4
 // address assigned to this machine. The receiver never serves shares or relays.
 type CoercionOptions struct {
+	ExportDir     string
 	Targets       []string
 	Callback      string
 	Credential    AccessOptions
@@ -131,7 +132,7 @@ func RunCoercion(parent context.Context, o CoercionOptions, progress func(string
 	if !o.DiscoverOnly {
 		var err error
 		var owned bool
-		receiver, owned, err = receiverForCoercion(parent, ip.String(), seen, receiverDiagnostics{debug: o.ReceiverDebug, observe: func(d SMBDiagnostic) {
+		receiver, owned, err = receiverForCoercion(parent, ip.String(), seen, receiverDiagnostics{debug: o.ReceiverDebug, exportDir: o.ExportDir, observe: func(d SMBDiagnostic) {
 			if progress != nil {
 				progress(d.String())
 			}
@@ -217,6 +218,9 @@ func RunCoercion(parent context.Context, o CoercionOptions, progress func(string
 			}
 			events := receiver.since(host, before)
 			for _, event := range events {
+				if appendNTLMCapture(&r, "coercion/callback/"+method, event) {
+					continue
+				}
 				severity := "info"
 				if event.Stage == "ntlm-authenticate" {
 					severity = "high"

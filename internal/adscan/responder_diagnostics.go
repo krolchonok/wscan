@@ -72,8 +72,9 @@ func smbStatusName(status uint32) string {
 }
 
 type receiverDiagnostics struct {
-	debug   bool
-	observe func(SMBDiagnostic)
+	debug     bool
+	observe   func(SMBDiagnostic)
+	exportDir string
 }
 
 func (r *coercionReceiver) diagnostic(host string, d SMBDiagnostic) {

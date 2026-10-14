@@ -19,15 +19,15 @@ import (
 )
 
 type sqliFormState struct {
-	projectID                           int64
-	options                             engine.SQLiFormOptions
-	generation, index, done, total      int
-	errors, forms                       int
-	busy                                bool
-	cancel                              context.CancelFunc
-	hits                                []engine.SQLiFormHit
-	limitation                          string
-	detail                              bool
+	projectID                      int64
+	options                        engine.SQLiFormOptions
+	generation, index, done, total int
+	errors, forms                  int
+	busy                           bool
+	cancel                         context.CancelFunc
+	hits                           []engine.SQLiFormHit
+	limitation                     string
+	detail                         bool
 }
 type sqliFormEvent struct {
 	generation int

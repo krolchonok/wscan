@@ -24,6 +24,7 @@ func runCoercionCLI(args []string) error {
 	callback := fs.String("callback", "", "локальный IPv4 приёмника")
 	discovery := fs.Bool("discovery", false, "только RPC bind, без Coerce")
 	debug := fs.Bool("debug", false, "подробные SMB/NTLM события без содержимого полей")
+	exportDir := fs.String("capture-dir", "", "экспорт NetNTLMv2 для Hashcat 5600 в отдельные файлы (0600)")
 	logPath := fs.String("log", "", "файл диагностического журнала (append, 0600)")
 	listen := fs.Bool("listen", false, "только приёмник; Ctrl+C завершает и выводит отчёт")
 	duration := fs.Duration("duration", time.Minute, "максимальная длительность запуска")
@@ -89,9 +90,9 @@ func runCoercionCLI(args []string) error {
 	var reports []adscan.AccessReport
 	var err error
 	if *listen {
-		reports, err = adscan.RunResponderWithOptions(ctx, *callback, hosts, adscan.ResponderOptions{Debug: *debug}, progress)
+		reports, err = adscan.RunResponderWithOptions(ctx, *callback, hosts, adscan.ResponderOptions{Debug: *debug, ExportDir: *exportDir}, progress)
 	} else {
-		reports, err = adscan.RunCoercion(ctx, adscan.CoercionOptions{ReceiverDebug: *debug, Targets: hosts, Callback: *callback, DiscoverOnly: *discovery, Timeout: *timeout, Credential: adscan.AccessOptions{Domain: *domainName, Credential: cred}}, progress)
+		reports, err = adscan.RunCoercion(ctx, adscan.CoercionOptions{ExportDir: *exportDir, ReceiverDebug: *debug, Targets: hosts, Callback: *callback, DiscoverOnly: *discovery, Timeout: *timeout, Credential: adscan.AccessOptions{Domain: *domainName, Credential: cred}}, progress)
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")

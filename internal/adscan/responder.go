@@ -20,6 +20,9 @@ func receiverForCoercion(ctx context.Context, ip string, allowed map[string]bool
 	if r := responderSessions.receivers[ip]; r != nil {
 		r.mu.Lock()
 		defer r.mu.Unlock()
+		if len(diagnostics) > 0 && diagnostics[0].exportDir != "" && diagnostics[0].exportDir != r.exportDir {
+			return nil, false, fmt.Errorf("каталог экспорта отличается от запущенного приёмника; перезапусти приёмник")
+		}
 		for host := range allowed {
 			if !r.allowed[host] {
 				return nil, false, fmt.Errorf("%s не входит в область запущенного приёмника; перезапусти приёмник с нужными целями", host)
@@ -33,7 +36,10 @@ func receiverForCoercion(ctx context.Context, ip string, allowed map[string]bool
 
 // RunResponder holds a standalone receiver until cancellation. It never causes
 // remote authentication itself. Coerce jobs in the same process can reuse it.
-type ResponderOptions struct{ Debug bool }
+type ResponderOptions struct {
+	Debug     bool
+	ExportDir string // Empty disables capture export; diagnostics never contain responses.
+}
 
 func RunResponder(ctx context.Context, callback string, targets []string, progress func(string)) ([]AccessReport, error) {
 	return RunResponderWithOptions(ctx, callback, targets, ResponderOptions{}, progress)
@@ -88,7 +94,7 @@ func RunResponderWithOptions(ctx context.Context, callback string, targets []str
 		responderSessions.Unlock()
 		return nil, fmt.Errorf("приёмник %s уже запущен", ip)
 	}
-	r, err := startCoercionReceiver(ctx, ip.String(), allowed, receiverDiagnostics{debug: options.Debug, observe: func(d SMBDiagnostic) {
+	r, err := startCoercionReceiver(ctx, ip.String(), allowed, receiverDiagnostics{debug: options.Debug, exportDir: options.ExportDir, observe: func(d SMBDiagnostic) {
 		if progress != nil {
 			progress(d.String())
 		}
@@ -113,6 +119,9 @@ func RunResponderWithOptions(ctx context.Context, callback string, targets []str
 		report := AccessReport{Host: host, Mode: "responder"}
 		events := r.since(host, time.Time{})
 		for _, event := range events {
+			if appendNTLMCapture(&report, "responder", event) {
+				continue
+			}
 			severity := "info"
 			if event.Stage == "ntlm-authenticate" {
 				severity = "high"
