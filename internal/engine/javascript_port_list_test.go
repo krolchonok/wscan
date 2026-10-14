@@ -12,7 +12,7 @@ import (
 // TestJSCommaPortListDoesNotCrash reproduces "Ошибка проверки: CVE-2018-8011:
 // javascript: dial tcp: lookup tcp/80,443: unknown port" — the template's
 // args declare `Port: 80,443` literally, which net.Dial can't resolve as a
-// single address. Takes the first port instead of crashing.
+// single address. The explicitly selected service takes precedence.
 func TestJSCommaPortListDoesNotCrash(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -51,7 +51,8 @@ func TestJSCommaPortListDoesNotCrash(t *testing.T) {
 	}
 
 	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 4, TimeoutSeconds: 5})
-	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"127.0.0.1"}}, []domain.Template{tmpl})
+	target := fmt.Sprintf("http://127.0.0.1:%d", port)
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{target}}, []domain.Template{tmpl})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

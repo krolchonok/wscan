@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"wscan/internal/domain"
 	tpl "wscan/internal/template"
@@ -68,8 +70,15 @@ func fakeListener(t *testing.T, resp []byte) int {
 			if err != nil {
 				return
 			}
-			_, _ = c.Write(resp)
-			_ = c.Close()
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				_, _ = c.Write(resp)
+				// Send EOF, then drain requests before closing: unread input
+				// causes a TCP reset on Windows instead of a clean response.
+				_ = c.(*net.TCPConn).CloseWrite()
+				_, _ = io.Copy(io.Discard, c)
+			}(c)
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,8 +38,12 @@ func TestAuditOutputDoesNotOverwriteAndIsPrivate(t *testing.T) {
 		t.Fatal(string(b), err)
 	}
 	s, err := os.Stat(p)
-	if err != nil || s.Mode().Perm() != 0600 {
+	if err != nil {
 		t.Fatal(s, err)
+	}
+	// Windows uses ACLs rather than Unix permission bits.
+	if runtime.GOOS != "windows" && s.Mode().Perm() != 0600 {
+		t.Fatal(s.Mode())
 	}
 }
 

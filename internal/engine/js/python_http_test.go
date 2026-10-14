@@ -7,15 +7,14 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestPythonFileServerSnapshotAndCleanup(t *testing.T) {
-	if _, e := exec.LookPath("python3"); e != nil {
-		t.Skip("python3 unavailable")
+	if _, e := python3Command(context.Background()); e != nil {
+		t.Skip(e)
 	}
 	file := filepath.Join(t.TempDir(), "tool.exe")
 	content := []byte{0, 1, 2, 255, 13, 10}

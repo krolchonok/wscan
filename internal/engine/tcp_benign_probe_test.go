@@ -77,6 +77,8 @@ func TestIsBenignTCPProbeErrorDoesNotMatchOtherErrors(t *testing.T) {
 	}{
 		{"dial tcp 10.0.0.10:2049: connect: connection refused", true},
 		{"read tcp 10.0.0.10:1666: i/o timeout", true},
+		{"dial tcp 10.0.0.10:2049: connectex: No connection could be made because the target machine actively refused it.", true},
+		{"read tcp 10.0.0.10:1666: wsarecv: An existing connection was forcibly closed by the remote host.", true},
 		{"dial tcp: lookup nosuchhost.invalid: no such host", false},
 		{"invalid hex input: encoding/hex: odd length hex string", false},
 	}

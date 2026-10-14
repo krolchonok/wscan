@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -188,8 +189,11 @@ func TestKerberoastAuthenticatedExchangeAndExport(t *testing.T) {
 			if e != nil || !strings.HasPrefix(string(b), fmt.Sprintf("$krb5tgs$%d$", v.ticket)) {
 				t.Fatal(string(b), e)
 			}
-			info, _ := os.Stat(r.Artifacts[0])
-			if info.Mode().Perm() != 0600 {
+			info, e := os.Stat(r.Artifacts[0])
+			if e != nil {
+				t.Fatal(e)
+			}
+			if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 				t.Fatal(info.Mode())
 			}
 			want := int32(3)

@@ -13,7 +13,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +26,32 @@ type PythonFileServer struct {
 	done        chan error
 	dir         string
 	once        sync.Once
+}
+
+// python3Command avoids Windows app aliases and accepts the py launcher.
+func python3Command(ctx context.Context, args ...string) (*exec.Cmd, error) {
+	candidates := []string{"python3", "python", "py"}
+	if runtime.GOOS == "windows" {
+		candidates = []string{"python", "py", "python3"}
+	}
+	for _, name := range candidates {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		var prefix []string
+		if name == "py" {
+			prefix = []string{"-3"}
+		}
+		check, cancel := context.WithTimeout(ctx, 4*time.Second)
+		version, err := exec.CommandContext(check, path, append(prefix, "--version")...).CombinedOutput()
+		cancel()
+		if err != nil || !strings.HasPrefix(strings.TrimSpace(string(version)), "Python 3.") {
+			continue
+		}
+		return exec.CommandContext(ctx, path, append(prefix, args...)...), nil
+	}
+	return nil, fmt.Errorf("HTTP: не найден рабочий Python 3 (python3, python или py -3)")
 }
 
 // HTTPAddressForTarget selects the interface used to reach the chosen host.
@@ -80,7 +108,10 @@ func StartPythonFileServer(ctx context.Context, file, address string, port int) 
 	if n > 128*1024*1024 {
 		return nil, fmt.Errorf("HTTP: файл превышает 128 МиБ")
 	}
-	cmd := exec.CommandContext(ctx, "python3", "-u", "-m", "http.server", strconv.Itoa(port), "--bind", "0.0.0.0", "--directory", dir)
+	cmd, e := python3Command(ctx, "-u", "-m", "http.server", strconv.Itoa(port), "--bind", "0.0.0.0", "--directory", dir)
+	if e != nil {
+		return nil, e
+	}
 	pipe, e := cmd.StdoutPipe()
 	if e != nil {
 		return nil, e

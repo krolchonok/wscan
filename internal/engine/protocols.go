@@ -142,6 +142,8 @@ func isBenignTCPProbeError(err error) bool {
 	for _, p := range []string{
 		"connection refused",
 		"connection reset",
+		"target machine actively refused", // Windows WSAECONNREFUSED
+		"connection was forcibly closed",  // Windows WSAECONNRESET
 		"no route to host",
 		"i/o timeout",
 		"deadline exceeded",
