@@ -28,7 +28,7 @@ var adAccessModes = []struct{ id, name string }{
 	{"sysvol", "SYSVOL / NETLOGON: обнаружение устаревших GPP cpassword (без чтения паролей)"},
 	{"ldap-security", "LDAP signing / LDAPS channel binding: проба с выбранной учёткой"},
 	{"bloodhound-ce", "BloodHound CE: удалённый сбор домена → ZIP (LDAP, без агента)"},
-	{"kerberoast", "Kerberoasting: LDAP SPN → TGS → Hashcat (RC4/AES, выбранная учётка)"},
+	{"kerberoast", "Kerberoasting: учётка / без pre-auth / готовый TGT → Hashcat"},
 }
 
 func (m *model) openADAccess() {
@@ -39,6 +39,9 @@ func (m *model) openADAccess() {
 	m.adAccessLDAPPort = 636
 	m.adWindowsPort = 5985
 	m.adKerberoastSPNs = ""
+	m.adKerberoastAuth = 0
+	m.adKerberoastEtypes = 0
+	m.adKerberoastNoPreauthUser, m.adKerberoastTGTFile = "", ""
 	m.adAccessGeneration++
 	m.adAccessAutoBusy, m.adAccessHint = false, ""
 	m.adAccessAutoHost = ""
@@ -111,6 +114,24 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 		}
 	case "h":
 		m.openADControllerPicker()
+	case "a":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+			m.adKerberoastAuth = (m.adKerberoastAuth + 1) % 3
+		}
+	case "u":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" && m.adKerberoastAuth == 1 {
+			m.startInput("kerberoast-nopreauth-user")
+			m.input = m.adKerberoastNoPreauthUser
+		}
+	case "e":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+			m.adKerberoastEtypes = (m.adKerberoastEtypes + 1) % 3
+		}
+	case "t":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" && m.adKerberoastAuth == 2 {
+			m.startInput("kerberoast-tgt-file")
+			m.input = m.adKerberoastTGTFile
+		}
 	case "r":
 		m.startInput("ad-coerce-callback")
 	case "d":
@@ -151,6 +172,9 @@ func (m model) adAccessJobRunning() bool {
 }
 
 func (m model) viewADAccess(w int) string {
+	if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+		return m.viewKerberoastSetup(w)
+	}
 	body := headingStyle.Render("Проверки AD") + "\n\n"
 	cred := "не выбрана (anonymous для SYSVOL)"
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
@@ -181,12 +205,10 @@ func (m model) viewADAccess(w int) string {
 	body += "↑/↓ выбрать проверку · Enter запустить · Esc назад\n\n"
 	if adAccessModes[m.adAccessIndex].id == "windows" {
 		body += fmt.Sprintf("WinRM/%d · l сменить HTTP/HTTPS\n\n", m.adWindowsPort)
-	} else if adAccessModes[m.adAccessIndex].id == "directory" || adAccessModes[m.adAccessIndex].id == "passpolicy" || adAccessModes[m.adAccessIndex].id == "kerberoast" {
+	} else if adAccessModes[m.adAccessIndex].id == "directory" || adAccessModes[m.adAccessIndex].id == "passpolicy" || (adAccessModes[m.adAccessIndex].id == "kerberoast" && m.adKerberoastAuth == 0) {
 		body += fmt.Sprintf("LDAP/%d · l сменить порт\n\n", m.adAccessLDAPPort)
 	}
-	if adAccessModes[m.adAccessIndex].id == "kerberoast" {
-		body += "s — SPN: " + valueOr(m.adKerberoastSPNs, "активные пользовательские SPN из LDAP") + "\nTGT/ключи не сохраняются; хеши TGS → приватные файлы.\n\n"
-	}
+
 	for i, row := range adAccessModes {
 		if i < 2 {
 			continue
@@ -243,13 +265,12 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 		o.Timeout = 30 * time.Second
 	}
 	if mode == "kerberoast" {
-		if cred.Username == "" {
-			m.message = "Выбери известную доменную учётку (c)"
+		var err error
+		o, err = m.kerberoastOptions()
+		if err != nil {
+			m.message = err.Error()
 			return m, nil
 		}
-		o.SPNs = strings.FieldsFunc(m.adKerberoastSPNs, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
-		o.RPS, o.Timeout = 2, 5*time.Second
-		o.ExportDir = filepath.Join(m.appDir, "exports", "kerberoast")
 	}
 	if mode == "bloodhound-ce" {
 		if cred.Username == "" {

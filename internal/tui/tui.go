@@ -196,6 +196,10 @@ type model struct {
 	adASREPIndex                                     int
 	adASREPUsers                                     string
 	adKerberoastSPNs                                 string
+	adKerberoastAuth                                 int
+	adKerberoastEtypes                               int
+	adKerberoastNoPreauthUser                        string
+	adKerberoastTGTFile                              string
 	adResponderJobID                                 int
 	responderDebug                                   bool
 	coerceActionIndex                                int
@@ -461,7 +465,8 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// case impossible to save. Every other action still treats empty
 		// input as "cancel this step".
 		isCred := strings.HasPrefix(action, "cred-")
-		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "asrep-users" && action != "project-results-search" && action != "port-browser-filter" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
+		isKerberoast := strings.HasPrefix(action, "kerberoast-")
+		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && !isKerberoast && action != "ad-access-host" && action != "asrep-users" && action != "project-results-search" && action != "port-browser-filter" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
 			return m, nil
 		}
 		switch action {
@@ -856,6 +861,12 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = "asrep-setup"
 		case "kerberoast-spns":
 			m.adKerberoastSPNs = value
+			m.screen = "ad-access"
+		case "kerberoast-nopreauth-user":
+			m.adKerberoastNoPreauthUser = value
+			m.screen = "ad-access"
+		case "kerberoast-tgt-file":
+			m.adKerberoastTGTFile = value
 			m.screen = "ad-access"
 		case "ad-coerce-callback":
 			m.adCoerceCallback = value

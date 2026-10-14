@@ -126,6 +126,19 @@ func roastFixture(t *testing.T, authEtype, ticketEtype int32, mutate func(*messa
 						t.Error("missing TGS authenticator")
 						return
 					}
+					for _, pa := range req.PAData {
+						if pa.PADataType == patype.PA_TGS_REQ {
+							var ap messages.APReq
+							if er := ap.Unmarshal(pa.PADataValue); er != nil {
+								t.Error(er)
+								return
+							}
+							if er := ap.DecryptAuthenticator(session); er != nil || !ap.Authenticator.CName.Equal(req.ReqBody.CName) {
+								t.Error("invalid TGS authenticator", er)
+								return
+							}
+						}
+					}
 					now := time.Now().UTC()
 					part := messages.EncKDCRepPart{Key: session, LastReqs: []messages.LastReq{{LRType: 0, LRValue: now}}, Nonce: req.ReqBody.Nonce, Flags: types.NewKrbFlags(), AuthTime: now, StartTime: now, EndTime: now.Add(time.Hour), SRealm: realm, SName: req.ReqBody.SName}
 					plain, er := part.Marshal()

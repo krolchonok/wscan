@@ -99,3 +99,40 @@ Cracking, relay, pivot и эксплуатация RCE не добавлены. 
 Живой повтор на `.20`/`.21` подтвердил NTLM identity, нативную MS17-010 на `.20`, отрицательный probe на `.21`, отказы SAMR и адресованные машинам контрольные local-only попытки по заведомо тестовому имени. После восстановления DC `.10` повторно прочитаны доменная политика и Windows collector, проверены AS-REQ для всех 21 пользователей и DNS AXFR. Передача collector через stdin зависла, сжатая команда выполнилась; JSON теперь формируется через ConvertTo-Json. Артефакты: `reports/lab-coverage-20261013/implementation` и `reports/kerberos-recheck-20261013-152522` в рабочем каталоге.
 
 Семантика флагов/параметров сверена с [Microsoft NTLM](https://learn.microsoft.com/en-us/troubleshoot/windows-server/windows-security/ntlm-user-authentication), [DSROLE](https://learn.microsoft.com/en-us/windows/win32/api/dsrole/nf-dsrole-dsrolegetprimarydomaininformation), [PSO](https://learn.microsoft.com/en-us/powershell/module/activedirectory/get-adfinegrainedpasswordpolicy), [WDigest](https://support.microsoft.com/en-us/security/microsoft-security-advisory-update-to-improve-credentials-protection-and-management-may-13-2014) и [DNS zones](https://learn.microsoft.com/en-us/windows/win32/dns/microsoftdns-zone).
+
+## Kerberos: режимы без известного пароля
+
+В проекте: `3 AD-разведка` → «Учётки, Kerberos, SYSVOL».
+
+- **AS-REP:** «Пользователи (имена или @файл)» принимает логины через запятую
+  или `@/путь/users.txt`. Файл содержит один логин на строку; пустые строки и
+  комментарии `#` пропускаются. TUI допускает до 5000 имён и файл до 1 МиБ.
+  Проверяются имена и наличие pre-auth; пароли для запросов не используются.
+- **Kerberoasting:** `a` переключает пароль/NT-хеш, логин без pre-auth и файл
+  TGT. `c` выбирает учётку первого режима, `u` задаёт логин второго, `t` —
+  путь к `.kirbi` (незашифрованный KRB-CRED) или `.ccache` v3/v4 третьего.
+  `s` принимает SPN через запятую либо `@/путь/spns.txt`, `e` выбирает
+  автоматическое шифрование / только RC4 / только AES, `Enter` запускает.
+- Режим без pre-auth выполняет AS-REQ сразу для сервисов. KDC должен разрешать
+  запрос выбранной учётке без pre-auth. Режим TGT отправляет TGS-REQ с ключом
+  импортированного билета. Оба режима используют явный список SPN без LDAP-входа;
+  сохранённые пароль/NT-хеш к ним не добавляются.
+- Для AES в этих режимах укажи владельца: `HTTP/server.lab.example|svc_http`.
+  Соль получается отдельным запросом к KDC. Если владелец/соль неизвестны,
+  ciphertext сохраняется в `kerberoast-pending-*.json` со статусом incomplete.
+  RC4 экспортируется без имени владельца. Получение ciphertext не доказывает
+  слабость пароля; офлайн-подбор выполняется отдельно.
+- TGT должен принадлежать выбранному домену, содержать сеансовый ключ и действовать
+  сейчас. Service/referral билеты, неоднозначные файлы и повреждённые структуры
+  отклоняются. Системный кеш, импорт в ОС и автоматическое продление не используются.
+  Экспорты TUI находятся в `exports/kerberoast/project-ID/` каталога настроек.
+
+CLI: `audit --mode kerberoast --host DC --domain DOMAIN --nopreauth-user USER
+--spns-file spns.txt` или тот же режим с `--tgt-file ticket.ccache`.
+`--username`, `--nopreauth-user`, `--tgt-file` взаимоисключающие.
+Для AS-REP словарь задаётся через `audit --mode asrep ... --users-file users.txt`.
+
+Обмен без pre-auth соответствует [режиму Rubeus](https://github.com/GhostPack/Rubeus#kerberoast);
+формат ccache — [спецификации MIT Kerberos](https://web.mit.edu/kerberos/krb5-latest/doc/formats/ccache_file_format.html).
+Проверки используют локальный синтетический KDC, включая RC4/AES, отсутствие
+pre-auth/password, отмену с сохранением результатов и проверку импортируемых файлов.

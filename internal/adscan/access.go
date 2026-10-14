@@ -30,6 +30,8 @@ type AccessOptions struct {
 	MaxObjects         int
 	Users              []string
 	SPNs               []string
+	NoPreauthUser      string
+	TGTFile            string
 	TGSEtypes          []int32
 	DNS                DNSOptions
 	RPS                int

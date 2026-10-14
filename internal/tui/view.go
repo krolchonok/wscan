@@ -292,6 +292,9 @@ func (m model) footer() string {
 	case "coerce-port-confirm":
 		return "Enter / y остановить владельца порта · Esc / n отменить"
 	case "ad-access":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+			return "↑/↓ проверка · a режим · e RC4/AES · c учётка · u логин · t TGT · s SPN/@файл · Enter запуск · Esc назад/отмена"
+		}
 		return "↑/↓ проверка · Enter запуск · c учётка · h контроллер · r приёмник · p Responder · Esc назад/отмена"
 	case "asrep-setup":
 		return "↑/↓ пункт · Enter выбрать · ← назад · x остановить"
@@ -1141,6 +1144,15 @@ func (m model) viewInput(w int) string {
 	}
 	if m.inputAction == "asrep-users" {
 		label = "Имена или @/путь/users.txt (Enter — автоматически)"
+	}
+	if m.inputAction == "kerberoast-spns" {
+		label = "SPN через запятую или @/путь/spns.txt; для AES: SPN|логин"
+	}
+	if m.inputAction == "kerberoast-nopreauth-user" {
+		label = "Известный логин учётки без Kerberos pre-auth"
+	}
+	if m.inputAction == "kerberoast-tgt-file" {
+		label = "Путь к TGT: .kirbi или .ccache v3/v4"
 	}
 	if m.inputAction == "ad-access-host" && m.inputReturn == "asrep-setup" {
 		label = "KDC: IP/DNS (Enter — автоматически)"

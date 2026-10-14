@@ -1,12 +1,9 @@
 package tui
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -114,34 +111,9 @@ func (m model) updateASREPSetup(key string) (tea.Model, tea.Cmd) {
 }
 
 func parseASREPUsersInput(input, realm string) ([]string, error) {
-	var users []string
-	if strings.HasPrefix(input, "@") {
-		f, err := os.Open(strings.TrimSpace(strings.TrimPrefix(input, "@")))
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		scanner := bufio.NewScanner(io.LimitReader(f, (1<<20)+1))
-		bytes := 0
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			bytes += len(scanner.Bytes()) + 1
-			if bytes > 1<<20 {
-				return nil, fmt.Errorf("список пользователей больше 1 МБ")
-			}
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			users = append(users, line)
-			if len(users) > 5000 {
-				return nil, fmt.Errorf("лимит списка: 5000 строк")
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
-	} else {
-		users = strings.FieldsFunc(input, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' })
+	users, err := adscan.ReadKerberosList(input, 5000)
+	if err != nil {
+		return nil, err
 	}
 	return adscan.NormalizeASREPUsers(users, realm, 5000)
 }
@@ -189,7 +161,7 @@ func (m model) viewASREPSetup(w int) string {
 	if m.adASREPUsers != "" {
 		users = m.adASREPUsers
 	}
-	rows := []string{"Домен: " + valueOr(m.adAccessDomain, "не определён"), "KDC: " + valueOr(m.adAccessHost, "автоматически из проекта / DNS"), "Пользователи: " + users, "Начать проверку", "Назад"}
+	rows := []string{"Домен: " + valueOr(m.adAccessDomain, "не определён"), "KDC: " + valueOr(m.adAccessHost, "автоматически из проекта / DNS"), "Пользователи (имена или @файл): " + users, "Начать проверку", "Назад"}
 	body := headingStyle.Render("AS-REP без пароля") + "\n\n"
 	for i, row := range rows {
 		body += renderListRow(row, i == m.adASREPIndex, w-4)

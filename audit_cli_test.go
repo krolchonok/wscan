@@ -53,6 +53,10 @@ func TestKerberosCLIValidationBeforeNetwork(t *testing.T) {
 		{"--mode", "asrep", "--host", "127.0.0.1", "--domain", "lab.local", "--rps", "0"},
 		{"--mode", "asrep", "--host", "127.0.0.1", "--domain", "lab.local", "--users", "alice", "--users-file", "missing"},
 		{"--mode", "kerberoast", "--host", "127.0.0.1", "--domain", "lab.local", "--username", "alice", "--tgs-etypes", "3"},
+		{"--mode", "kerberoast", "--host", "127.0.0.1", "--domain", "lab.local", "--nopreauth-user", "legacy"},
+		{"--mode", "kerberoast", "--host", "127.0.0.1", "--domain", "lab.local", "--nopreauth-user", "legacy", "--tgt-file", "ticket.kirbi"},
+		{"--mode", "kerberoast", "--host", "127.0.0.1", "--domain", "lab.local", "--nopreauth-user", "legacy", "--username", "alice"},
+		{"--mode", "asrep", "--host", "127.0.0.1", "--domain", "lab.local", "--nopreauth-user", "legacy"},
 	} {
 		if e := runAuditCLI(args); e == nil {
 			t.Fatal("invalid request accepted", args)

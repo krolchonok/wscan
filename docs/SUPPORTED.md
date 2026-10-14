@@ -15,7 +15,7 @@ WinPEAS — согласованное исключение, только руч
 | Сервисы и версии | Вся установленная база match/softmatch из nmap-service-probes; собственные TCP/UDP-пробы, fallback, TLS и извлечение продукта/версии |
 | CIDR, живые хосты и имена | ICMP с fallback ping, DNS/PTR, выбор сетевых интерфейсов |
 | AD-аудит | LDAP/DNS SRV, учётки и политики, delegation/trusts, LAPS/gMSA read-access indicators, AD CS, pre2k/SPN кандидаты, AS-REP без пароля (RC4/AES → Hashcat) |
-| Kerberos CLI / TUI | AS-REP по списку/LDAP; Kerberoasting с выбранной password/NT-hash учёткой, LDAP SPN → нативные AS/TGS запросы → RC4/AES Hashcat, без внешних утилит |
+| Kerberos CLI / TUI | AS-REP по списку/LDAP; Kerberoasting с password/NT-hash, без пароля через учётку без pre-auth, либо с TGT (.kirbi/ccache v3/v4); SPN/@файл → RC4/AES Hashcat |
 | Windows / passpolicy / DNS | Нормализованные доменные/PSO/локальные политики, WinRM-инвентаризация WDigest/KB/сети/firewall/DNS, ограниченный AXFR; [режимы и границы](LAB_COVERAGE.md) |
 | Локальные SMB-учётки | Отдельный local-only режим TUI/CLI, исключение DC/неизвестной роли, область имени машины, журнал и лимит ошибок по хосту/учётке; локальная политика уменьшает бюджет |
 | CLI-аудит | `ad-scan`, `audit`, `local-smb`, справка без открытия TUI/БД; JSON и сохранение частичных результатов |
@@ -69,7 +69,7 @@ WinPEAS — согласованное исключение, только руч
 | BloodHound CE | Собственный удалённый LDAP/LDAPS-сбор домена в CE ZIP v6; членство, primary group, containment, GPO links, trusts; без EXE на целях. ACL/AD CS/машинные методы и Legacy пока не собираются; [инструкция](BLOODHOUND.md) |
 | RPC coercion | Меню `i` → Coerce / Responder выбранной машины, локальный адрес по маршруту; 5 методов по SMB TCP/445 и встроенный SMB/NTLM-приёмник; [методы и ограничения](COERCION.md); практически проверено на одном ПК; callback и анонимный Authenticate получены; непустой ответ с учётными данными не получен |
 | Responder диагностика | Connection ID, IP:порт, SMB/NTLM этапы, длины полей, NTSTATUS и причины закрытия; `v` в TUI, `--debug --log` в CLI; без записи NTLM Response/секретов |
-| Импорт TGT/ccache и парольный перебор в AD Access | Не поддерживаются; Kerberoasting получает TGT выбранной учёткой только в памяти, экспортирует ciphertext сервисного TGS; LAPS/gMSA пароли не экспортируются |
+| Парольный перебор в AD Access | Не включён; AS-REP проверяет список логинов без паролей. Импортированный TGT и ключ остаются в памяти; LAPS/gMSA пароли не экспортируются |
 | p0wny-shell | Справочный сторонний файл, не включён в релиз и не запускается движком |
 | Windows x86-64 | Отдельный EXE/ZIP; native tests и smoke-команды предусмотрены в CI. Ограничения приёмника TCP/445 и инструкции: WINDOWS.md |
 | macOS release | Готовая сборка не выпускается |
