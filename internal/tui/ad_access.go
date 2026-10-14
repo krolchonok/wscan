@@ -21,10 +21,14 @@ var adAccessModes = []struct{ id, name string }{
 	{"coercion-discovery", "Coerce: проверить доступность RPC-интерфейсов машин TCP/445"},
 	{"coercion", "Coerce: машины TCP/445 → локальный SMB-приёмник (5 RPC-методов)"},
 	{"directory", "LDAP-аудит: учётки, политики, delegation, trusts, LAPS, gMSA, AD CS"},
+	{"passpolicy", "Парольная политика и PSO: полный разбор параметров"},
+	{"windows", "Windows через WinRM: WDigest, политика, патчи, NIC/routes, firewall, DNS"},
+	{"dns", "DNS: анонимный AXFR и объявленная рекурсия"},
 	{"asrep", "AS-REP без пароля → Hashcat"},
 	{"sysvol", "SYSVOL / NETLOGON: обнаружение устаревших GPP cpassword (без чтения паролей)"},
 	{"ldap-security", "LDAP signing / LDAPS channel binding: проба с выбранной учёткой"},
 	{"bloodhound-ce", "BloodHound CE: удалённый сбор домена → ZIP (LDAP, без агента)"},
+	{"kerberoast", "Kerberoasting: LDAP SPN → TGS → Hashcat (RC4/AES, выбранная учётка)"},
 }
 
 func (m *model) openADAccess() {
@@ -33,6 +37,8 @@ func (m *model) openADAccess() {
 	m.adAccessIndex, m.adAccessCred = 2, -1
 	m.adBloodHoundPort, m.adBloodHoundLimit = 636, 5000
 	m.adAccessLDAPPort = 636
+	m.adWindowsPort = 5985
+	m.adKerberoastSPNs = ""
 	m.adAccessGeneration++
 	m.adAccessAutoBusy, m.adAccessHint = false, ""
 	m.adAccessAutoHost = ""
@@ -72,7 +78,22 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 	case "v":
 		return m.toggleResponderDebug()
 	case "l":
-		if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
+		mode := adAccessModes[m.adAccessIndex].id
+		if mode == "windows" {
+			if m.adWindowsPort == 5986 {
+				m.adWindowsPort = 5985
+			} else {
+				m.adWindowsPort = 5986
+			}
+		}
+		if mode == "directory" || mode == "passpolicy" || mode == "ldap-security" || mode == "kerberoast" {
+			if m.adAccessLDAPPort == 389 {
+				m.adAccessLDAPPort = 636
+			} else {
+				m.adAccessLDAPPort = 389
+			}
+		}
+		if mode == "bloodhound-ce" {
 			if m.adBloodHoundPort == 389 {
 				m.adBloodHoundPort = 636
 			} else {
@@ -82,6 +103,11 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 	case "n":
 		if adAccessModes[m.adAccessIndex].id == "bloodhound-ce" {
 			m.startInput("ad-bloodhound-limit")
+		}
+	case "s":
+		if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+			m.startInput("kerberoast-spns")
+			m.input = m.adKerberoastSPNs
 		}
 	case "h":
 		m.openADControllerPicker()
@@ -153,6 +179,14 @@ func (m model) viewADAccess(w int) string {
 		body += "Не собираются: ACL, AD CS, сессии и локальные права.\n\n"
 	}
 	body += "↑/↓ выбрать проверку · Enter запустить · Esc назад\n\n"
+	if adAccessModes[m.adAccessIndex].id == "windows" {
+		body += fmt.Sprintf("WinRM/%d · l сменить HTTP/HTTPS\n\n", m.adWindowsPort)
+	} else if adAccessModes[m.adAccessIndex].id == "directory" || adAccessModes[m.adAccessIndex].id == "passpolicy" || adAccessModes[m.adAccessIndex].id == "kerberoast" {
+		body += fmt.Sprintf("LDAP/%d · l сменить порт\n\n", m.adAccessLDAPPort)
+	}
+	if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+		body += "s — SPN: " + valueOr(m.adKerberoastSPNs, "активные пользовательские SPN из LDAP") + "\nTGT/ключи не сохраняются; хеши TGS → приватные файлы.\n\n"
+	}
 	for i, row := range adAccessModes {
 		if i < 2 {
 			continue
@@ -186,7 +220,7 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 	if adAccessModes[m.adAccessIndex].id == "asrep" {
 		return m.startASREP()
 	}
-	if strings.TrimSpace(m.adAccessHost) == "" || strings.TrimSpace(m.adAccessDomain) == "" {
+	if strings.TrimSpace(m.adAccessHost) == "" || (strings.TrimSpace(m.adAccessDomain) == "" && adAccessModes[m.adAccessIndex].id != "windows") {
 		m.message = "Укажи хост контроллера (h) и домен (d)"
 		return m, nil
 	}
@@ -200,6 +234,23 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 		port = 636
 	}
 	o := adscan.AccessOptions{Host: strings.TrimSpace(m.adAccessHost), Domain: strings.TrimSpace(m.adAccessDomain), Mode: mode, Credential: cred, LDAPPort: port, MaxObjects: 5000, ExportDir: filepath.Join(m.appDir, "exports", "ad")}
+	if mode == "windows" {
+		if cred.Username == "" {
+			m.message = "Выбери известную учётку (c) для WinRM"
+			return m, nil
+		}
+		o.WinRMPort = m.adWindowsPort
+		o.Timeout = 30 * time.Second
+	}
+	if mode == "kerberoast" {
+		if cred.Username == "" {
+			m.message = "Выбери известную доменную учётку (c)"
+			return m, nil
+		}
+		o.SPNs = strings.FieldsFunc(m.adKerberoastSPNs, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
+		o.RPS, o.Timeout = 2, 5*time.Second
+		o.ExportDir = filepath.Join(m.appDir, "exports", "kerberoast")
+	}
 	if mode == "bloodhound-ce" {
 		if cred.Username == "" {
 			m.message = "Выбери доменную учётку (c): BloodHound не собирается анонимно"
@@ -231,12 +282,22 @@ func (m model) runADAccess(o adscan.AccessOptions) runFunc {
 		if o.Mode == "bloodhound-ce" {
 			report, err = adscan.RunBloodHound(ctx, adscan.BloodHoundOptions{AccessOptions: o, Progress: func(s string) { emit(s) }})
 		} else {
+			o.Progress = func(s string) { emit(s) }
 			report, err = adscan.RunAccess(ctx, o)
 		}
-		if err != nil {
-			status = "failed"
-			return engine.Result{RunID: runID, TargetsScanned: 1, Errors: []string{err.Error()}}, err
+		runErr := err
+		for _, policy := range report.Policies {
+			m.scanner.RememberLocalPolicy(m.current.ID, policy)
 		}
+		if runErr != nil {
+			status = "failed"
+			if ctx.Err() != nil {
+				status = "cancelled"
+			}
+			report.Checks = append(report.Checks, adscan.AccessCheck{ID: "execution", Name: "Выполнение проверки", State: "error", Severity: "info", Evidence: runErr.Error()})
+		}
+		saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer saveCancel()
 		if len(report.Artifacts) > 0 {
 			report.Checks = append(report.Checks, adscan.AccessCheck{ID: "artifacts", Name: "Локальные артефакты", State: "observed", Severity: "info", Evidence: strings.Join(report.Artifacts, "\n")})
 		}
@@ -246,12 +307,16 @@ func (m model) runADAccess(o adscan.AccessOptions) runFunc {
 		}
 		findings := report.Findings()
 		for _, f := range findings {
-			if err = m.store.SaveFinding(ctx, runID, f); err != nil {
+			if err = m.store.SaveFinding(saveCtx, runID, f); err != nil {
 				status = "failed"
 				return engine.Result{RunID: runID, TargetsScanned: 1, Findings: findings, Errors: []string{err.Error()}}, err
 			}
 		}
-		return engine.Result{RunID: runID, TargetsScanned: 1, Findings: findings}, nil
+		result := engine.Result{RunID: runID, TargetsScanned: 1, Findings: findings}
+		if runErr != nil {
+			result.Errors = []string{runErr.Error()}
+		}
+		return result, runErr
 	}
 }
 

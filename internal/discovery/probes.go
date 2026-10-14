@@ -540,6 +540,7 @@ func identifyProbeService(ctx context.Context, service domain.Service, libraryDi
 		if len(response) == 0 {
 			continue
 		}
+		previousName := service.Name
 		found, hard := db.match(ctx, p, response, service)
 		service = found
 		if hard && service.Name != "ssl" && service.Product != "" {
@@ -547,7 +548,11 @@ func identifyProbeService(ctx context.Context, service domain.Service, libraryDi
 		}
 		if hard && service.Name == "ssl" {
 			service.Tunnel = "ssl"
-			service.Name = "https"
+			// TLS identifies a transport, not HTTP. Keep an existing protocol
+			// hint until an application signature identifies what is inside.
+			if previousName != "" && previousName != "ssl" {
+				service.Name = previousName
+			}
 		}
 	}
 	return service

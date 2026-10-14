@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"wscan/internal/app"
+	"wscan/internal/commandgen"
 	"wscan/internal/domain"
 	"wscan/internal/engine"
 	"wscan/internal/report"
@@ -145,6 +146,19 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"csrf": csrf})
+	})
+	mux.HandleFunc("POST /api/commands/msf", func(w http.ResponseWriter, r *http.Request) {
+		var finding domain.Finding
+		if err := decode(w, r, &finding); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		command, explanation, ok := commandgen.MSF(finding)
+		if !ok {
+			fail(w, 400, "Для этой находки команда msfconsole недоступна: нужны MS17-010 или MS12-020 и корректный адрес цели.")
+			return
+		}
+		writeJSON(w, 200, map[string]string{"command": command, "explanation": explanation})
 	})
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		ps, err := s.App.Store.ListProjects(r.Context())

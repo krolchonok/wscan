@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-var reconActions = []string{"Сканировать", "AD-разведка", "Добавить цель", "Фильтр машин", "Учётки", "Задачи", "Результаты", "Проверки", "Настройки", "Проекты", "Машины", "← Назад"}
+var reconActions = []string{"Сканировать", "AD-разведка", "Добавить цель", "Фильтр машин", "Учётки", "Задачи", "Результаты", "Проверки", "Настройки", "Проекты", "Машины", "← Назад", "Порты"}
 
 var reconFilters = []string{"Все машины", "AD / Windows", "С результатами"}
 
@@ -450,6 +450,8 @@ func (m model) runReconAction() (tea.Model, tea.Cmd) {
 		m.openHostScope("")
 	case 11:
 		return m.sidebarBack()
+	case 12:
+		m.openPortBrowser()
 	}
 	return m, nil
 }

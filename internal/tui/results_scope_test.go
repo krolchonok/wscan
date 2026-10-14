@@ -94,6 +94,10 @@ func TestNavigationAndContextHelpPreserveEditors(t *testing.T) {
 		if !ok || next.screen != "project-results" || next.resultsScope.runID != 0 {
 			t.Fatalf("navigation from %s", screen)
 		}
+		next, ok = m.navigateWorkspace("p")
+		if !ok || next.screen != "port-browser" || next.portBrowserReturn != screen {
+			t.Fatalf("port navigation from %s", screen)
+		}
 	}
 	for _, screen := range []string{"input", "coerce-port-confirm", "mssql-console", "cred-delete-confirm"} {
 		m.screen = screen

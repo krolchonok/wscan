@@ -32,6 +32,22 @@ var version = "dev"
 var supportedFeatures string
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--help", "-h", "help":
+			fmt.Println("wscan: scan, export, version, capabilities, library, signatures, audit-library, coerce, ad-scan, audit, local-smb\nRead-only audit: wscan audit --help\nAD discovery: wscan ad-scan --help\nLocal SMB accounts: wscan local-smb --help")
+			return
+		case "audit":
+			fatalIf(runAuditCLI(os.Args[2:]))
+			return
+		case "ad-scan":
+			fatalIf(runADScanCLI(os.Args[2:]))
+			return
+		case "local-smb":
+			fatalIf(runLocalSMBCLI(os.Args[2:]))
+			return
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "coerce" {
 		fatalIf(runCoercionCLI(os.Args[2:]))
 		return

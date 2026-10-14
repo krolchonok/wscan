@@ -39,7 +39,7 @@ func resultCounts(fs []domain.Finding, taskErrors ...int) string {
 func (m model) serviceResultErrors(host string, service domain.Service) int {
 	for i := len(m.jobs) - 1; i >= 0; i-- {
 		j := m.jobs[i]
-		if j.projectID != m.current.ID || j.kind == jobDiscover {
+		if j.projectID != m.current.ID || !j.runsServiceChecks() {
 			continue
 		}
 		if j.service != nil && (j.service.Host != service.Host || j.service.Port != service.Port || j.service.Protocol != service.Protocol) {

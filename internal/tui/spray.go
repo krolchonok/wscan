@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"wscan/internal/domain"
@@ -31,6 +32,7 @@ func (m *model) openSpraySetup(svc domain.Service) {
 		return
 	}
 	m.sprayTarget = &svc
+	m.sprayLocalOnly = svc.Protocol == "smb" || svc.Name == "microsoft-ds"
 	m.sprayCredentials = creds
 	m.sprayChecked = map[int64]bool{}
 	m.sprayCredIndex = 0
@@ -64,6 +66,10 @@ func (m model) updateSpraySetup(key string) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		m.sprayChecked = map[int64]bool{}
+	case "l":
+		if m.sprayTarget.Protocol == "smb" || m.sprayTarget.Name == "microsoft-ds" {
+			m.sprayLocalOnly = !m.sprayLocalOnly
+		}
 	case "enter":
 		selected := m.selectedSprayCredentials()
 		if len(selected) == 0 {
@@ -94,6 +100,13 @@ func (m model) viewSpraySetup(w int) string {
 	}
 	body := headingStyle.Render(fmt.Sprintf("Credential-атака — %s:%d/%s", t.Host, t.Port, t.Protocol)) + "\n"
 	body += "Отметь credentials для проверки (Space), затем Enter — запуск.\n\n"
+	if t.Protocol == "smb" || t.Name == "microsoft-ds" {
+		mode := "сохранённая область учётки"
+		if m.sprayLocalOnly {
+			mode = "только локальные учётки; DC исключены"
+		}
+		body += "Режим: " + mode + " · l переключить\n\n"
+	}
 	lo, hi := windowRange(m.sprayCredIndex, len(m.sprayCredentials), max(1, m.panelRows()-4))
 	body += moreLine(lo, true)
 	for i := lo; i < hi; i++ {
@@ -120,8 +133,15 @@ func (m model) runSprayCmd(creds []domain.Credential) tea.Cmd {
 	target := *m.sprayTarget
 	scanner := m.scanner
 	ctx := m.ctx
+	localOnly := m.sprayLocalOnly
 	return func() tea.Msg {
-		res, err := scanner.SprayCredentials(ctx, p, []domain.Service{target}, creds)
+		var res *engine.SprayResult
+		var err error
+		if localOnly {
+			res, err = scanner.SprayLocalCredentials(ctx, p, []domain.Service{target}, creds, engine.LocalSprayOptions{})
+		} else {
+			res, err = scanner.SprayCredentials(ctx, p, []domain.Service{target}, creds)
+		}
 		if res == nil {
 			return sprayDone{err: err}
 		}
@@ -157,7 +177,10 @@ func (m model) updateSprayResults(key string) (tea.Model, tea.Cmd) {
 func attemptStatus(a domain.AuthAttempt) string {
 	switch {
 	case a.Skipped:
-		return "⊘ пропущено (лок-аут)"
+		if a.Error != "" {
+			return "⊘ " + a.Error
+		}
+		return "⊘ пропущено (лимит ошибок)"
 	case a.Success:
 		return "✓ успех"
 	case a.Error != "":
@@ -262,6 +285,11 @@ func (m model) runSelectedModule(args map[string]string) (tea.Model, tea.Cmd) {
 
 func (m model) credentialForAttempt(a domain.AuthAttempt) (domain.Credential, bool) {
 	for _, c := range m.spraySelectedCreds {
+		if a.Local && strings.EqualFold(c.Username, a.Username) && (c.Domain == "" || c.Domain == "." || strings.EqualFold(c.Domain, a.Domain)) {
+			c.Domain = a.Domain
+			c.Local = true
+			return c, true
+		}
 		if c.Username == a.Username && c.Domain == a.Domain {
 			return c, true
 		}

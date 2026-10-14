@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"wscan/internal/domain"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -61,6 +62,8 @@ type Host struct {
 	SMBGuest                  bool
 	NullShares                []string
 	GuestShares               []string
+	SMBAccess                 []SMBAccessObservation
+	SMBUsers                  []string
 }
 
 // ADCSPath identifies a certificate enrollment endpoint.
@@ -71,6 +74,7 @@ type ADCSPath struct {
 
 // Result is the completed subnet discovery summary.
 type Result struct {
+	Coverage     []domain.CheckCoverage
 	CIDR         string
 	HostsScanned int
 	Hosts        []Host

@@ -109,6 +109,7 @@ func (r *Runner) registerModules(L *lua.LState, ctrl *control, scriptID string) 
 		"seeall":          stdnseSeeall,
 		"silent_require":  stdnseSilentRequire,
 		"parse_timespec":  stdnseParseTimespec,
+		"make_buffer":     stdnseMakeBuffer,
 		"debug":           noop, "debug1": noop, "debug2": noop, "debug3": noop, "debug4": noop, "debug5": noop,
 		"verbose": noop, "verbose1": noop, "print_debug": noop, "print_verbose": noop, "log": noop,
 		"sleep":        ctrl.sleepFn,
@@ -289,15 +290,35 @@ func (c *control) sleepFn(L *lua.LState) int {
 // --- stdnse --------------------------------------------------------------
 
 func (r *Runner) stdnseGetScriptArgs(L *lua.LState) int {
-	for i := 1; i <= L.GetTop(); i++ {
-		name := L.CheckString(i)
-		if v, ok := r.cfg.Args[name]; ok {
-			L.Push(lua.LString(v))
-			return 1
+	n := L.GetTop()
+	for i := 1; i <= n; i++ {
+		value := lua.LValue(lua.LNil)
+		lookup := func(name string) {
+			if value == lua.LNil {
+				if v, ok := r.cfg.Args[name]; ok {
+					value = lua.LString(v)
+				}
+			}
 		}
+		switch arg := L.Get(i).(type) {
+		case lua.LString:
+			lookup(string(arg))
+		case *lua.LTable:
+			for j := 1; j <= arg.Len(); j++ {
+				name, ok := arg.RawGetInt(j).(lua.LString)
+				if !ok {
+					L.ArgError(i, "aliases must contain strings")
+					return 0
+				}
+				lookup(string(name))
+			}
+		default:
+			L.ArgError(i, "string or table of aliases expected")
+			return 0
+		}
+		L.Push(value)
 	}
-	L.Push(lua.LNil)
-	return 1
+	return n
 }
 
 func stdnseOutputTable(L *lua.LState) int {

@@ -235,13 +235,16 @@ func (m model) navigationLine() string {
 		}
 	}
 	if m.width >= 100 && m.screen == "desk" {
-		parts = append(parts, mutedStyle.Render("i Взаимодействие · t Проверки · c Учётки · p Настройки"))
+		parts = append(parts, mutedStyle.Render("i Взаимодействие · t Проверки · c Учётки · , Настройки"))
 	}
 	return strings.Join(parts, "  ")
 }
 
 func (m model) contextLine() string {
 	switch m.screen {
+	case "port-browser":
+		panes := []string{"Порты", "Хосты с открытым портом"}
+		return headingStyle.Render(panes[min(1, max(0, m.portBrowserFocus))]) + mutedStyle.Render(" · весь проект · / поиск порта или службы")
 	case "project-results", "finding-details":
 		return mutedStyle.Render(m.resultsScopeLabel())
 	case "history":

@@ -61,10 +61,12 @@ type Config struct {
 // one-time warning before it can become true (internal/tui/settings.go).
 // See internal/engine/code.go.
 type Engine struct {
-	store  Saver
-	config Config
+	store            Saver
+	config           Config
+	localPolicyCache *localPolicyCache
 }
 type Result struct {
+	Coverage          []domain.CheckCoverage
 	HostNames         map[string][]string
 	RunID             int64
 	Findings          []domain.Finding
@@ -86,7 +88,7 @@ func New(s Saver, c Config) *Engine {
 	if c.TimeoutSeconds < 1 {
 		c.TimeoutSeconds = 10
 	}
-	return &Engine{store: s, config: c}
+	return &Engine{store: s, config: c, localPolicyCache: &localPolicyCache{}}
 }
 
 // Scan runs the templates with no progress reporting.

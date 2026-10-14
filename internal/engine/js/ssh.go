@@ -198,6 +198,35 @@ func (c *SSHClient) Run(cmd string) (string, error) {
 	return string(out), err
 }
 
+func (c *SSHClient) RunLimited(cmd string, limit int) (string, error) {
+	if c.connection == nil {
+		return "", fmt.Errorf("no connection")
+	}
+	if limit <= 0 {
+		limit = 1024 * 1024
+	}
+	session, err := c.connection.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	stop := context.AfterFunc(c.ctx, func() { _ = session.Close() })
+	defer stop()
+	out := &cappedOutput{limit: limit}
+	stderr := &cappedOutput{limit: 65536}
+	session.Stdout = out
+	session.Stderr = stderr
+	err = session.Run(cmd)
+	text := string(out.data)
+	if out.truncated {
+		return text, fmt.Errorf("вывод SSH превышает %d байт; результат неполный", limit)
+	}
+	if err != nil {
+		return text, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr.data)))
+	}
+	return text, nil
+}
+
 func (c *SSHClient) Close() (bool, error) {
 	if c.connection == nil {
 		return true, nil

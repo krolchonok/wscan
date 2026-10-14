@@ -112,6 +112,7 @@ func (m Worker) runADWindowsChecks(ctx context.Context, hosts []adscan.Host, emi
 		out.Findings = append(out.Findings, r.Findings...)
 		out.Errors = append(out.Errors, r.Errors...)
 		out.Skipped = append(out.Skipped, r.Skipped...)
+		out.Coverage = append(out.Coverage, r.Coverage...)
 	}
 	return out
 }
@@ -132,8 +133,12 @@ func runADWindowsPlan(ctx context.Context, hosts []adscan.Host, allowActive bool
 				return result
 			}
 			label := net.JoinHostPort(host.Address, strconv.Itoa(check.port)) + " · " + check.name
+			cover := func(state, evidence string) {
+				result.Coverage = append(result.Coverage, domain.CheckCoverage{Host: host.Address, Port: check.port, CheckID: check.id, State: state, Evidence: evidence})
+			}
 			if len(capabilities) > 0 {
 				if reason := adWindowsCapabilitySkip(check, capabilities[0][host.Address]); reason != "" {
+					cover("skipped", reason)
 					result.Skipped = append(result.Skipped, label+": "+reason)
 					continue
 				}
@@ -150,6 +155,7 @@ func runADWindowsPlan(ctx context.Context, hosts []adscan.Host, allowActive bool
 					reason += "; проверка создаёт задание печати и записывает тестовые данные"
 				}
 				result.Skipped = append(result.Skipped, label+": "+reason)
+				cover("disabled", reason)
 				continue
 			}
 			if emit != nil {
@@ -166,6 +172,15 @@ func runADWindowsPlan(ctx context.Context, hosts []adscan.Host, allowActive bool
 			// A detected vulnerability survives an error during session cleanup.
 			if vulnerable {
 				result.Findings = append(result.Findings, adWindowsFinding(host, check))
+				cover("confirmed", check.evidence)
+			} else if err != nil {
+				state := "error"
+				if errors.Is(err, enginejs.ErrRDPNLARequired) {
+					state = "incomplete"
+				}
+				cover(state, err.Error())
+			} else {
+				cover("negative", "Выполненный проверочный запрос не подтвердил уязвимость; это не полный аудит обновлений")
 			}
 		}
 	}

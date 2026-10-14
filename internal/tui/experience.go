@@ -51,6 +51,12 @@ func (m model) actionRows() []actionRow {
 // a jobEvent message flows back in.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case findingCommandCopied:
+		m.message = "Команда отправлена в буфер терминала (OSC 52)."
+		if x.err != nil {
+			m.message = "Копирование команды: " + x.err.Error()
+		}
+		return m, nil
 	case adAccessIdentityDetected:
 		m.applyADAccessIdentity(x)
 		return m, nil
@@ -455,6 +461,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDesk(key)
 		case "service-inventory":
 			return m.updateServiceInventory(key)
+		case "port-browser":
+			return m.updatePortBrowser(key)
 		case "networks":
 			return m.updateNetworks(key)
 		case "action-menu":
@@ -549,6 +557,9 @@ func (m model) updateProjects(key string) (tea.Model, tea.Cmd) {
 // --- desk ------------------------------------------------------------
 
 func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
+	if key == "m" {
+		return m.openDeskCommand()
+	}
 	if key == "esc" {
 		if m.sidebarEnabled {
 			m.reconMenuFocus = true
@@ -697,7 +708,7 @@ func (m model) updateDesk(key string) (tea.Model, tea.Cmd) {
 	case "t":
 		m.pendingTemplateIDs = nil
 		m.openCatalog(false, "desk")
-	case "p":
+	case ",":
 		m.screen = "settings"
 	case "c":
 		m.openCredentials()

@@ -510,6 +510,9 @@ func WebURL(service domain.Service) (string, bool) {
 		return "", false
 	}
 	name := strings.ToLower(service.Name)
+	if name == "ncacn_http" || name == "rpc-http" {
+		return "", false
+	}
 	secure := service.Tunnel == "ssl" || service.Tunnel == "tls" || strings.Contains(name, "https") || name == "wsmans" || service.Port == 5986
 	if !strings.Contains(name, "http") && !strings.Contains(name, "winrm") && name != "wsman" && name != "wsmans" && service.Port != 5985 && service.Port != 5986 && service.Port != 80 && service.Port != 443 && service.Port != 8000 && service.Port != 8008 && service.Port != 8080 && service.Port != 8081 && service.Port != 8443 {
 		return "", false

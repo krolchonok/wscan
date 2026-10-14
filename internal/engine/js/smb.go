@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"wscan/internal/smbidentity"
 
 	"github.com/dop251/goja"
 	"github.com/hirochachacha/go-smb2"
@@ -157,14 +158,11 @@ type NegotiationLog struct {
 // different upstream library than ConnectSMBInfoMode's zgrab2 SMBLog, with
 // a different field set (nuclei itself backs the two methods differently).
 //
-// SigningEnabled/SigningRequired are real, decoded from the same NEGOTIATE
-// response's SecurityMode bits. OSVersion/NetBIOS*/DNS*/ForestName are
-// always empty: the real fingerprintx plugin reads them from the SMB2
-// NTLMSSP CHALLENGE message's Version field and TargetInfo AV_PAIRs, which
-// needs a SPNEGO-wrapped SESSION_SETUP exchange we don't perform yet.
-// Templates requiring those non-empty (smb-enum-domains.yaml, smb-enum.yaml,
-// smb-os-detect.yaml) run cleanly but won't match until that's added.
+// Signing is decoded from NEGOTIATE. Identity fields come from the native
+// NTLM challenge probe; IdentityError describes unavailable identity while
+// retaining successfully read signing settings. No password is sent.
 type ServiceSMB struct {
+	IdentityError       string `json:"IdentityError,omitempty"`
 	SigningEnabled      bool   `json:"SigningEnabled"`
 	SigningRequired     bool   `json:"SigningRequired"`
 	OSVersion           string `json:"OSVersion"`
@@ -215,6 +213,17 @@ func (c *SMBClient) ListSMBv2Metadata(args ...any) (*ServiceSMB, error) {
 		svc.SigningEnabled = mode&0x1 != 0
 		svc.SigningRequired = mode&0x2 != 0
 	}
+	identity, err := smbidentity.Probe(c.ctx, host, port, c.timeout)
+	if err != nil {
+		svc.IdentityError = err.Error()
+		return svc, nil
+	}
+	svc.OSVersion = identity.OSVersion
+	svc.NetBIOSComputerName = identity.ComputerName
+	svc.NetBIOSDomainName = identity.DomainName
+	svc.DNSComputerName = identity.DNSComputerName
+	svc.DNSDomainName = identity.DNSDomainName
+	svc.ForestName = identity.ForestName
 	return svc, nil
 }
 

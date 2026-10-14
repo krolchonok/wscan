@@ -117,6 +117,13 @@ type model struct {
 	serviceInventoryProject  bool
 	serviceInventoryEditing  bool
 	serviceInventorySelected map[string]bool
+	portBrowserReturn        string
+	portBrowserPort          int
+	portBrowserProtocol      string
+	portBrowserHost          string
+	portBrowserFocus         int // 0 ports, 1 hosts
+	portBrowserFilter        string
+	portBrowserResultsReturn *portResultReturn
 	projectResultsReturn     string
 	findingDetailFocus       bool // right pane scrolls; otherwise arrows select a finding
 	findingDirectReturn      bool // opened from a host result rather than the result list
@@ -171,6 +178,7 @@ type model struct {
 	adAccessHost                                     string
 	adAccessDomain                                   string
 	adAccessLDAPPort                                 int
+	adWindowsPort                                    int
 	adAccessGeneration                               int
 	adAccessAutoBusy                                 bool
 	adAccessHint                                     string
@@ -187,6 +195,7 @@ type model struct {
 	adAccessJobID                                    int
 	adASREPIndex                                     int
 	adASREPUsers                                     string
+	adKerberoastSPNs                                 string
 	adResponderJobID                                 int
 	responderDebug                                   bool
 	coerceActionIndex                                int
@@ -255,6 +264,7 @@ type model struct {
 
 	// text input
 	input       string
+	inputOffset int // Rune distance from the end; zero also works for prefilled fields.
 	inputAction string
 	inputReturn string
 
@@ -279,6 +289,7 @@ type model struct {
 
 	// credential-attack (spray + post-auth modules) against one target
 	sprayTarget        *domain.Service
+	sprayLocalOnly     bool
 	sprayCredentials   []domain.Credential
 	sprayChecked       map[int64]bool
 	sprayCredIndex     int
@@ -402,6 +413,7 @@ func (m *model) startInput(action string) {
 	m.inputReturn = m.screen
 	m.inputAction = action
 	m.input = ""
+	m.inputOffset = 0
 	if m.credEditID != 0 {
 		switch action {
 		case "cred-username":
@@ -425,6 +437,9 @@ func (m model) inputBack() string {
 }
 
 func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.editInput(k) {
+		return m, nil
+	}
 	switch k.Type {
 	case tea.KeyEsc:
 		m.screen = m.inputBack()
@@ -446,10 +461,16 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// case impossible to save. Every other action still treats empty
 		// input as "cancel this step".
 		isCred := strings.HasPrefix(action, "cred-")
-		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "asrep-users" && action != "project-results-search" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
+		if value == "" && !strings.HasPrefix(action, "ad-recon-") && !isCred && action != "ad-access-host" && action != "asrep-users" && action != "project-results-search" && action != "port-browser-filter" && action != "lfi-vhost" && action != "mysql-user" && action != "mysql-database" && !strings.HasPrefix(action, "web-discovery-") && action != "web-wordlist-filter" && !strings.HasPrefix(action, "ssh-dict-") {
 			return m, nil
 		}
 		switch action {
+		case "port-browser-filter":
+			m.portBrowserFilter = value
+			m.portBrowserPort, m.portBrowserProtocol, m.portBrowserHost = 0, "", ""
+			m.portBrowserFocus = 0
+			m.screen = "port-browser"
+			return m, nil
 		case "select-host-port":
 			port, protocol, err := parseSinglePort(value)
 			if err != nil {
@@ -757,6 +778,9 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = "guided-scan"
 			if m.wizardStep == 0 {
 				m.wizardIndex = 1
+				if m.wizardProfile == 1 {
+					m.wizardIndex = 2
+				}
 			} else {
 				m.wizardIndex = 0
 			}
@@ -830,6 +854,9 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "asrep-users":
 			m.adASREPUsers = value
 			m.screen = "asrep-setup"
+		case "kerberoast-spns":
+			m.adKerberoastSPNs = value
+			m.screen = "ad-access"
 		case "ad-coerce-callback":
 			m.adCoerceCallback = value
 			m.coerceCallbackAuto = false
@@ -923,21 +950,6 @@ func (m model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "module-command":
 			return m.runSelectedModule(map[string]string{"command": value})
 		}
-		return m, nil
-	case tea.KeyBackspace:
-		if len(m.input) > 0 {
-			runes := []rune(m.input)
-			m.input = string(runes[:len(runes)-1])
-		}
-		return m, nil
-	case tea.KeyCtrlU:
-		m.input = ""
-		return m, nil
-	case tea.KeySpace:
-		m.input += " "
-		return m, nil
-	case tea.KeyRunes:
-		m.input += string(k.Runes)
 		return m, nil
 	}
 	return m, nil

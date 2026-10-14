@@ -371,6 +371,14 @@ func TestSidebarLetterShortcuts(t *testing.T) {
 	if m.screen != "desk" {
 		t.Fatal("b did not return")
 	}
+	for _, screen := range []string{"desk", "ad-menu", "project-results", "recon"} {
+		m.screen = screen
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+		opened := next.(model)
+		if opened.screen != "port-browser" || opened.portBrowserReturn != screen || cmd != nil {
+			t.Fatalf("p from %s did not open ports without starting a task", screen)
+		}
+	}
 	m.screen = "project-results"
 	if _, _, ok := m.selectSidebarShortcut("f"); ok {
 		t.Fatal("menu shortcut hijacked results filter")
@@ -380,7 +388,7 @@ func TestSidebarLetterShortcuts(t *testing.T) {
 		t.Fatal("menu filter inaccessible")
 	}
 	m.screen = "input"
-	for _, key := range []string{"f", "b"} {
+	for _, key := range []string{"f", "b", "p"} {
 		if _, _, ok := m.selectSidebarShortcut(key); ok {
 			t.Fatalf("%s intercepted input", key)
 		}
@@ -388,7 +396,7 @@ func TestSidebarLetterShortcuts(t *testing.T) {
 	m.screen = "ad-menu"
 	m.height = 50
 	view := ansi.Strip(m.viewSidebar(32))
-	if !strings.Contains(view, "f Выбор машин") || !strings.Contains(view, "b ← Назад") {
+	if !strings.Contains(view, "f Выбор машин") || !strings.Contains(view, "b ← Назад") || !strings.Contains(view, "p Порты") {
 		t.Fatal("letter labels missing")
 	}
 }

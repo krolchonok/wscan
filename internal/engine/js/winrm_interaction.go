@@ -1,6 +1,8 @@
 package js
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -119,8 +121,32 @@ func RunWinRMPowerShell(ctx context.Context, o WinRMOptions, script string, limi
 		limit = 1024 * 1024
 	}
 	out, stderr := &cappedOutput{limit: limit}, &cappedOutput{limit: 64 * 1024}
-	command := winrm.Powershell("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $ErrorActionPreference='Stop'; " + script)
-	code, err := client.RunWithContextWithInput(ctx, command, out, stderr, nil)
+	prologue := "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; $ErrorActionPreference='Stop'; "
+	command := winrm.Powershell(prologue + script)
+	var input io.Reader
+	if len(command) > 7000 {
+		// Some WinRS/PowerShell combinations never deliver stdin EOF to
+		// Console.In.ReadToEnd. Prefer a compressed, self-contained command.
+		var compressed bytes.Buffer
+		packed := gzip.NewWriter(&compressed)
+		if _, err := io.WriteString(packed, script); err != nil {
+			return "", "", 0, err
+		}
+		if err := packed.Close(); err != nil {
+			return "", "", 0, err
+		}
+		payload := base64.StdEncoding.EncodeToString(compressed.Bytes())
+		unpack := "$__wscan_gz='" + payload + "';$__wm=New-Object IO.MemoryStream(,[Convert]::FromBase64String($__wscan_gz));$__wg=New-Object IO.Compression.GZipStream($__wm,[IO.Compression.CompressionMode]::Decompress);$__wr=New-Object IO.StreamReader($__wg,[Text.Encoding]::UTF8);try{Invoke-Expression ($__wr.ReadToEnd())}finally{$__wr.Dispose();$__wg.Dispose();$__wm.Dispose()}"
+		compressedCommand := winrm.Powershell(prologue + unpack)
+		if len(compressedCommand) <= 8000 {
+			command = compressedCommand
+		} else {
+			// cmd.exe on old Windows limits command lines to 8191 characters.
+			command = winrm.Powershell(prologue + "[Console]::InputEncoding = New-Object System.Text.UTF8Encoding; Invoke-Expression ([Console]::In.ReadToEnd())")
+			input = strings.NewReader(script)
+		}
+	}
+	code, err := client.RunWithContextWithInput(ctx, command, out, stderr, input)
 	text := string(out.data)
 	if out.truncated {
 		text += "\n[Вывод обрезан]"

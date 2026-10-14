@@ -178,12 +178,23 @@ func (m model) saveScanSettingValue(value string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Service check indicators must not inherit failures from interactive sessions,
+// host discovery, or DNS lookups on the same host.
+func (j *job) runsServiceChecks() bool {
+	switch j.kind {
+	case jobChecks, jobFull, jobPort, jobBulkPort, jobAD:
+		return true
+	default:
+		return false
+	}
+}
+
 // serviceCheckStatus describes the latest matching job without conflating an
 // unscanned service with a completed scan that found nothing.
 func (m model) serviceCheckStatus(host string, s domain.Service) string {
 	for i := len(m.jobs) - 1; i >= 0; i-- {
 		j := m.jobs[i]
-		if j.projectID != m.current.ID || j.kind == jobDiscover {
+		if j.projectID != m.current.ID || !j.runsServiceChecks() {
 			continue
 		}
 		matches := false

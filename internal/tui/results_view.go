@@ -75,6 +75,8 @@ func (m model) projectResultDetailLines(w int) []string {
 	f := *m.findingDetail
 	body := ""
 	switch m.findingSection {
+	case 3:
+		body = m.findingCommandText()
 	case 1:
 		evidence := strings.TrimSpace(f.Evidence)
 		if table, ok := smbFindingTable(f, w); ok {
@@ -145,7 +147,7 @@ func (m model) resultDetailHeader(w int) string {
 	width := max(1, w-4)
 	title := fmt.Sprintf("Находка %d / %d", m.findingIndex+1, len(m.filteredProjectFindings()))
 	body := headingStyle.Render(ansi.Truncate(title, width, "…")) + "\n"
-	labels := []string{"Обзор", "Доказательства", "Рекомендации"}
+	labels := m.findingSections()
 	if m.findingRaw {
 		body += headingStyle.Render("Технический отчёт") + "\n"
 	} else {

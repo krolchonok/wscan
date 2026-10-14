@@ -117,7 +117,7 @@ func TestGuidedOverviewAndReviewFitSmallTerminal(t *testing.T) {
 	if m.wizardStep != 1 {
 		t.Fatal("scope step did not continue")
 	}
-	m.wizardIndex = 1
+	m.wizardIndex = 2 // Discovery followed by the project's selected checks.
 	next, _ = m.updateGuidedScan("enter")
 	m = next.(model)
 	if m.wizardStep != 2 || !strings.Contains(ansi.Strip(m.viewGuidedScan(100)), "Запустить проверку") {
@@ -198,6 +198,8 @@ func TestGuidedSelectedActionAndStartRemainVisible(t *testing.T) {
 		label := "Запустить проверку"
 		if i == 0 {
 			label = "Настроить порты"
+		} else if i == guidedAliveProfile {
+			label = "Запустить поиск хостов"
 		}
 		if text := ansi.Strip(m.View()); !strings.Contains(text, label) {
 			t.Fatalf("start hidden for profile %d: %s", i, text)

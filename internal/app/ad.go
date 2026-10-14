@@ -61,6 +61,7 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 	}); err != nil {
 		return engine.Result{}, &details, 0, "", err
 	}
+	m.collectADCoverage(ctx, &details, emit)
 	dnsErrors, dnsSkipped := adDiagnosticStatus(details.Diagnostics)
 	for _, diagnostic := range details.Diagnostics {
 		emit(diagnostic)
@@ -79,6 +80,7 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 		_ = m.store.FinishRun(context.Background(), runID, status)
 	}()
 	result := engine.Result{RunID: runID, TargetsScanned: 1, Errors: append([]string(nil), dnsErrors...)}
+	result.Coverage = append(result.Coverage, details.Coverage...)
 	result.Skipped = append(result.Skipped, dnsSkipped...)
 	result.TargetsScanned = details.HostsScanned
 	if len(details.Hosts) > 0 {
@@ -244,7 +246,7 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 			if node.SMBGuest {
 				access = append(access, "guest: "+strings.Join(node.GuestShares, ", "))
 			}
-			finding := adEvidenceFinding(cidr, node.Address, "smb-anonymous-access", "SMB доступен без пользовательской учётки", strings.Join(access, "; "), "Проверено только перечисление имён общих папок; содержимое файлов не читается.")
+			finding := adEvidenceFinding(cidr, node.Address, "smb-anonymous-access", "SMB-ресурсы перечисляются без учётки", strings.Join(access, "; ")+". Перечисление имён не подтверждает чтение или запись файлов.", "Проверено только перечисление имён общих папок; содержимое файлов не читается.")
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
 				return result, &details, projectID, projectName, err
@@ -279,7 +281,10 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 	result.Skipped = append(result.Skipped, asrep.Skipped...)
 	details.Diagnostics = append(details.Diagnostics, asrep.Skipped...)
 	windows := m.runADWindowsChecks(ctx, details.Hosts, emit, checks)
+	result.Coverage = append(result.Coverage, windows.Coverage...)
+	details.Coverage = append(details.Coverage, windows.Coverage...)
 	checks = append(checks, windows.Findings...)
+	checks = append(checks, adCoverageFindings(cidr, result.Coverage)...)
 	checkErrors = append(checkErrors, windows.Errors...)
 	result.Skipped = append(result.Skipped, windows.Skipped...)
 	details.Diagnostics = append(details.Diagnostics, checkErrors...)
@@ -288,27 +293,28 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 		emit("Пропуск: " + skipped)
 	}
 	result.Errors = append(result.Errors, checkErrors...)
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer persistCancel()
 	if ctx.Err() != nil {
 		status = "cancelled"
-		return result, &details, projectID, projectName, ctx.Err()
 	}
 	for _, scanErr := range checkErrors {
 		emit("Ошибка AD-проверки: " + scanErr)
 	}
 	for _, finding := range checks {
-		if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
+		if err := m.store.SaveFinding(persistCtx, runID, finding); err != nil {
 			status = "failed"
 			return result, &details, projectID, projectName, err
 		}
 		result.Findings = append(result.Findings, finding)
 	}
 	summary := adReconSummary(cidr, details, result.Findings)
-	if err := m.store.SaveFinding(ctx, runID, summary); err != nil {
+	if err := m.store.SaveFinding(persistCtx, runID, summary); err != nil {
 		status = "failed"
 		return result, &details, projectID, projectName, err
 	}
 	result.Findings = append(result.Findings, summary)
-	return result, &details, projectID, projectName, nil
+	return result, &details, projectID, projectName, ctx.Err()
 }
 
 func adDiagnosticStatus(diagnostics []string) (errs, skipped []string) {
@@ -552,9 +558,17 @@ func enumerateAnonymousSMB(ctx context.Context, result *adscan.Result, onHost fu
 						Host: host.Address, Port: 445, Mode: mode, EntryLimit: 32,
 					}, "", "")
 					cancel()
+					observation := adscan.SMBAccessObservation{Mode: mode, State: "observed", Shares: entries}
 					if err != nil {
+						observation.State = "error"
+						observation.Error = err.Error()
+						if strings.Contains(strings.ToUpper(err.Error()), "DENIED") {
+							observation.State = "denied"
+						}
+						host.SMBAccess = append(host.SMBAccess, observation)
 						continue
 					}
+					host.SMBAccess = append(host.SMBAccess, observation)
 					shares := make([]string, 0, len(entries))
 					for _, entry := range entries {
 						shares = append(shares, entry.Name)

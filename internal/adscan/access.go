@@ -23,10 +23,14 @@ import (
 type AccessOptions struct {
 	Host, Domain, Mode string
 	LDAPPort           int
+	WinRMPort          int
+	DNSPort            int
 	Credential         domain.Credential
 	ExportDir          string
 	MaxObjects         int
 	Users              []string
+	SPNs               []string
+	TGSEtypes          []int32
 	DNS                DNSOptions
 	RPS                int
 	Timeout            time.Duration
@@ -45,12 +49,13 @@ type AccessObject struct {
 	Attributes map[string][]string `json:"attributes"`
 }
 type AccessReport struct {
-	Host      string         `json:"host"`
-	Endpoint  string         `json:"endpoint,omitempty"`
-	Mode      string         `json:"mode"`
-	Checks    []AccessCheck  `json:"checks"`
-	Objects   []AccessObject `json:"objects,omitempty"`
-	Artifacts []string       `json:"artifacts,omitempty"`
+	Host      string                  `json:"host"`
+	Endpoint  string                  `json:"endpoint,omitempty"`
+	Mode      string                  `json:"mode"`
+	Checks    []AccessCheck           `json:"checks"`
+	Objects   []AccessObject          `json:"objects,omitempty"`
+	Artifacts []string                `json:"artifacts,omitempty"`
+	Policies  []domain.PasswordPolicy `json:"password_policies,omitempty"`
 }
 
 func (r *AccessReport) add(id, name, state, severity, evidence string) {
@@ -108,6 +113,12 @@ func validateAccess(o *AccessOptions) error {
 
 func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	r := AccessReport{Host: o.Host, Mode: o.Mode}
+	if o.Mode == "dns" {
+		return AuditDNS(ctx, o.Host, o.Domain, o.DNSPort, o.Timeout)
+	}
+	if o.Mode == "windows" {
+		return windowsAccess(ctx, o)
+	}
 	if o.Mode == "asrep" {
 		return kerberosAccess(ctx, o)
 	}
@@ -117,13 +128,17 @@ func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	switch o.Mode {
 	case "directory":
 		return directoryAccess(ctx, o)
+	case "passpolicy":
+		return passwordPolicyAccess(ctx, o)
+	case "kerberoast":
+		return kerberoastAccess(ctx, o)
 	case "secrets":
 		return r, fmt.Errorf("экспорт LAPS/gMSA секретов не включён; используй LDAP-аудит доступности атрибутов")
 	case "spray":
 		return r, fmt.Errorf("password spray не включён: он может блокировать учётные записи")
 	case "ldap-security":
 		return ldapSecurity(ctx, o)
-	case "user-enum", "kerberoast", "pre2k":
+	case "user-enum", "pre2k":
 		return r, fmt.Errorf("этот Kerberos-режим отключён; смотри read-only кандидаты в LDAP-аудите")
 	case "sysvol":
 		return sysvolAccess(ctx, o)
@@ -241,7 +256,7 @@ func directoryAccess(ctx context.Context, o AccessOptions) (AccessReport, error)
 	}{
 		{"users", "Пользователи", base, "(&(objectCategory=person)(objectClass=user))", []string{"sAMAccountName", "userAccountControl", "servicePrincipalName", "pwdLastSet", "lastLogonTimestamp", "adminCount", "memberOf", "msDS-ResultantPSO"}},
 		{"computers", "Компьютеры / pre2k", base, "(objectClass=computer)", []string{"sAMAccountName", "userAccountControl", "dNSHostName", "pwdLastSet", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity"}},
-		{"policy", "Парольные политики", base, "(|(objectClass=domainDNS)(objectClass=msDS-PasswordSettings))", []string{"lockoutThreshold", "lockoutDuration", "lockOutObservationWindow", "minPwdLength", "pwdHistoryLength", "msDS-LockoutThreshold", "msDS-LockoutDuration", "msDS-LockoutObservationWindow", "msDS-MinimumPasswordLength", "msDS-PSOAppliesTo", "msDS-PasswordSettingsPrecedence"}},
+		{"policy", "Парольные политики", base, "(|(objectClass=domainDNS)(objectClass=msDS-PasswordSettings))", passwordPolicyAttributes},
 		{"delegation", "Делегирование", base, "(|(msDS-AllowedToDelegateTo=*)(msDS-AllowedToActOnBehalfOfOtherIdentity=*)(userAccountControl:1.2.840.113556.1.4.803:=524288))", []string{"sAMAccountName", "userAccountControl", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity"}},
 		{"trusts", "Доверия", base, "(objectClass=trustedDomain)", []string{"trustPartner", "trustDirection", "trustType", "trustAttributes"}},
 		{"laps", "LAPS / Windows LAPS: читаемые атрибуты", base, "(objectClass=computer)", []string{"sAMAccountName", "ms-Mcs-AdmPwdExpirationTime", "msLAPS-PasswordExpirationTime", "ms-Mcs-AdmPwd", "msLAPS-Password", "msLAPS-EncryptedPassword"}},
@@ -260,6 +275,9 @@ func directoryAccess(ctx context.Context, o AccessOptions) (AccessReport, error)
 		}
 		r.add(q.id, q.name, state, "info", detail)
 		for _, entry := range entries {
+			if q.id == "policy" {
+				addPasswordPolicy(&r, entry)
+			}
 			obj := AccessObject{DN: entry.DN, Attributes: map[string][]string{}}
 			name := entry.GetAttributeValue("sAMAccountName")
 			uac, _ := strconv.ParseUint(entry.GetAttributeValue("userAccountControl"), 10, 32)

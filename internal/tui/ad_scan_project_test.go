@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"wscan/internal/adscan"
 	"wscan/internal/domain"
 	"wscan/internal/engine"
@@ -180,5 +182,53 @@ func TestGenericScanProfilesDoNotDuplicateAD(t *testing.T) {
 		if got.(model).wizardProfile != profile || profile == 1 {
 			t.Fatal("wrong generic scan profile")
 		}
+	}
+}
+
+func TestADReconSelectsProjectHostsWithoutExpandingSubnets(t *testing.T) {
+	m := model{current: domain.Project{ID: 42, Targets: []string{"192.0.2.0/24", "192.0.2.10"}},
+		inventory:   map[string]*hostInfo{"192.0.2.20": {}, "192.0.2.10": {}},
+		hostNetwork: "198.51.100.0/24", screen: "ad-menu", width: 100, height: 24}
+	next, _ := m.updateADMenu("enter")
+	m = next.(model)
+	view := m.viewGuidedScan(96)
+	if !strings.Contains(view, "Найденные хосты (2)") || !strings.Contains(view, "Указать хосты") {
+		t.Fatal("AD target choices missing")
+	}
+	m.wizardIndex = 0
+	next, _ = m.updateGuidedScan("enter")
+	m = next.(model)
+	if m.wizardScope != "192.0.2.10 192.0.2.20" || m.wizardStep != 0 || len(m.jobs) != 0 {
+		t.Fatalf("found-host selection changed scope or launched a scan: %q", m.wizardScope)
+	}
+	next, _ = m.updateGuidedScan("enter")
+	if next.(model).wizardStep != 2 {
+		t.Fatal("found hosts cannot proceed to AD scan confirmation")
+	}
+}
+
+func TestADReconManualHostsCanBeEditedAtCursor(t *testing.T) {
+	m := model{screen: "guided-scan", wizardProfile: 1, wizardScope: "192.0.2.10", wizardIndex: 1}
+	next, _ := m.updateGuidedScan("enter")
+	m = next.(model)
+	if m.screen != "input" || m.inputAction != "guided-scope" {
+		t.Fatal("manual AD target input did not open")
+	}
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyDelete}, {Type: tea.KeyRunes, Runes: []rune("1")}, {Type: tea.KeyEnter}} {
+		next, _ = m.Update(key)
+		m = next.(model)
+	}
+	if m.wizardScope != "192.0.2.11" || m.screen != "guided-scan" || m.wizardIndex != 2 || len(m.jobs) != 0 {
+		t.Fatalf("manual AD scope was not saved for confirmation: %q", m.wizardScope)
+	}
+}
+
+func TestADReconEmptyFoundHostsPreservesScope(t *testing.T) {
+	m := model{current: domain.Project{Targets: []string{"192.0.2.0/24"}},
+		screen: "guided-scan", wizardProfile: 1, wizardScope: "192.0.2.0/24"}
+	next, _ := m.updateGuidedScan("enter")
+	m = next.(model)
+	if m.wizardScope != "192.0.2.0/24" || m.wizardStep != 0 || !strings.Contains(m.message, "Найденных хостов нет") {
+		t.Fatal("empty found-host selection erased scope or expanded a subnet")
 	}
 }

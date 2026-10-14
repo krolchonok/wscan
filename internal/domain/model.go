@@ -137,6 +137,7 @@ type AuthAttempt struct {
 	Username string `json:"username"`
 	Domain   string `json:"domain,omitempty"`
 	Success  bool   `json:"success"`
+	Local    bool   `json:"local,omitempty"`
 	// Skipped is true when the attempt was never sent because Username had
 	// already reached the project's lockout-safety threshold (see
 	// internal/storage.Store.RecentFailureCount) — this is the safety
@@ -189,6 +190,8 @@ type Service struct {
 // same way templates and findings are, so there is no separate encryption
 // layer for Secret.
 type Credential struct {
+	// Local is runtime context from local-only validation; it is never a domain fallback.
+	Local     bool
 	ID        int64
 	ProjectID int64
 	// Type distinguishes the secret's shape: "password", "ntlm-hash", "ssh-key".

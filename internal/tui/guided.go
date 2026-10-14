@@ -30,9 +30,11 @@ func (m *model) openGuidedScan() {
 	m.screen = "guided-scan"
 }
 
-var scanProfileChoices = []int{0, 2, 3}
+const guidedAliveProfile = 4
 
-var guidedProfiles = []string{"Поиск портов и сервисов", "Аудит AD без учётки", "Обнаружение и проверки проекта", "Проверки известных сервисов"}
+var scanProfileChoices = []int{0, guidedAliveProfile, 2, 3}
+
+var guidedProfiles = []string{"Поиск портов и сервисов", "Аудит AD без учётки", "Обнаружение и проверки проекта", "Проверки известных сервисов", "Живые хосты (ARP / ICMP / TCP)"}
 
 func (m model) viewGuidedScan(w int) string {
 	var b strings.Builder
@@ -44,8 +46,15 @@ func (m model) viewGuidedScan(w int) string {
 
 	switch m.wizardStep {
 	case 0:
-		b.WriteString(renderListRow("Цели: "+scanScopeLabel(m.wizardScope)+" · изменить", m.wizardIndex == 0, w))
-		b.WriteString(renderListRow("Продолжить →", m.wizardIndex == 1, w))
+		if m.wizardProfile == 1 {
+			b.WriteString(ansi.Truncate("Цели: "+scanScopeLabel(m.wizardScope), max(1, w-4), "…") + "\n")
+			b.WriteString(renderListRow(fmt.Sprintf("Найденные хосты (%d)", len(m.hostBuckets())), m.wizardIndex == 0, w))
+			b.WriteString(renderListRow("Указать хосты", m.wizardIndex == 1, w))
+			b.WriteString(renderListRow("Продолжить →", m.wizardIndex == 2, w))
+		} else {
+			b.WriteString(renderListRow("Цели: "+scanScopeLabel(m.wizardScope)+" · изменить", m.wizardIndex == 0, w))
+			b.WriteString(renderListRow("Продолжить →", m.wizardIndex == 1, w))
+		}
 	case 1:
 		b.WriteString(ansi.Truncate("Цели: "+scanScopeLabel(m.wizardScope), max(1, w-4), "…") + "\n\n")
 		for i, profile := range scanProfileChoices {
@@ -55,7 +64,7 @@ func (m model) viewGuidedScan(w int) string {
 	case 2:
 		b.WriteString(ansi.Truncate("Цели: "+scanScopeLabel(m.wizardScope), max(1, w-4), "…") + "\n")
 		b.WriteString(ansi.Truncate(guidedProfiles[m.wizardProfile], max(1, w-4), "…") + "\n")
-		if m.wizardProfile >= 2 {
+		if m.wizardProfile == 2 || m.wizardProfile == 3 {
 			b.WriteString(fmt.Sprintf("Выбрано проверок: %d\n", len(m.current.TemplateIDs)))
 			if len(m.current.TemplateIDs) == 0 {
 				b.WriteString("Нет проверок: выберите их в обзоре.\n")
@@ -64,6 +73,8 @@ func (m model) viewGuidedScan(w int) string {
 		label := "Запустить проверку"
 		if m.wizardProfile == 0 {
 			label = "Настроить порты →"
+		} else if m.wizardProfile == guidedAliveProfile {
+			label = "Запустить поиск хостов"
 		}
 		b.WriteString(renderListRow(label, true, w-4))
 
@@ -104,14 +115,27 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 		limit := 1
 		if m.wizardStep == 1 {
 			limit = len(scanProfileChoices)
+		} else if m.wizardStep == 0 && m.wizardProfile == 1 {
+			limit = 2
 		}
 		m.wizardIndex = min(limit, m.wizardIndex+1)
 	case "enter":
 		switch m.wizardStep {
 		case 0:
-			if m.wizardIndex == 0 {
+			if m.wizardProfile == 1 && m.wizardIndex == 0 {
+				hosts := m.hostBuckets()
+				if len(hosts) == 0 {
+					m.message = "Найденных хостов нет. Запустите поиск живых хостов или укажите адреса вручную."
+					return m, nil
+				}
+				m.wizardScope = strings.Join(hosts, " ")
+				m.wizardIndex = 2
+				m.message = fmt.Sprintf("Выбрано хостов: %d", len(hosts))
+				return m, nil
+			}
+			if m.wizardProfile == 1 && m.wizardIndex == 1 || m.wizardProfile != 1 && m.wizardIndex == 0 {
 				m.startInput("guided-scope")
-				m.input = m.wizardScope
+				m.input = strings.Join(strings.Fields(m.wizardScope), " ")
 				return m, nil
 			}
 			if strings.TrimSpace(m.wizardScope) == "" {
@@ -127,7 +151,7 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 		case 1:
 			if m.wizardIndex == len(scanProfileChoices) {
 				m.startInput("guided-scope")
-				m.input = m.wizardScope
+				m.input = strings.Join(strings.Fields(m.wizardScope), " ")
 				return m, nil
 			}
 			m.wizardProfile = scanProfileChoices[min(max(0, m.wizardIndex), len(scanProfileChoices)-1)]
@@ -142,7 +166,7 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 			}
 		case 2:
 			hosts := strings.Fields(m.wizardScope)
-			kind := []string{jobDiscover, jobAD, jobFull, jobChecks}[m.wizardProfile]
+			kind := []string{jobDiscover, jobAD, jobFull, jobChecks, jobAlive}[m.wizardProfile]
 			if kind == jobDiscover {
 				m.actionHosts = append([]string(nil), hosts...)
 				m.actionService = nil
@@ -155,8 +179,12 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+			templateIDs := m.current.TemplateIDs
+			if kind == jobAlive {
+				templateIDs = nil
+			}
 			if m.shared != nil {
-				r := app.ScanRequest{ProjectID: m.current.ID, Spec: app.Spec{Kind: kind, Hosts: hosts, TemplateIDs: m.current.TemplateIDs, DiscNoPing: true}, DNS: m.adScanDNS}
+				r := app.ScanRequest{ProjectID: m.current.ID, Spec: app.Spec{Kind: kind, Hosts: hosts, TemplateIDs: templateIDs, DiscNoPing: kind != jobAlive}, DNS: m.adScanDNS}
 				if kind == jobAD {
 					r.CIDR = strings.Join(hosts, " ")
 				}
@@ -169,7 +197,7 @@ func (m model) updateGuidedScan(key string) (tea.Model, tea.Cmd) {
 			} else if kind == jobAD {
 				m.launchADScan(strings.Join(hosts, " "))
 			} else {
-				m.startLaunch(launchSpec{kind: kind, label: guidedProfiles[m.wizardProfile], hosts: hosts, templateIDs: m.current.TemplateIDs, discNoPing: true})
+				m.startLaunch(launchSpec{kind: kind, label: guidedProfiles[m.wizardProfile], hosts: hosts, templateIDs: templateIDs, discNoPing: kind != jobAlive})
 			}
 			m.jobsReturn = "desk"
 			m.screen = "jobs"

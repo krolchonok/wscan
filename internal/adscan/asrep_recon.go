@@ -21,6 +21,7 @@ func ASREPReconOptions(result Result) ([]AccessOptions, []string) {
 		}
 		group := groups[realm]
 		group.users = append(group.users, host.LDAPUsers...)
+		group.users = append(group.users, host.SMBUsers...)
 		group.users = append(group.users, host.ASREPUsers...)
 		if contains(host.Ports, 88) {
 			group.hosts = append(group.hosts, host.Address)

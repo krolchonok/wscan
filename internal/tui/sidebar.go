@@ -6,7 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var sidebarOrder = []int{11, 10, 0, 1, 2, 4, 5, 6, 7, 8, 3, 9}
+var sidebarOrder = []int{11, 10, 12, 0, 1, 2, 4, 5, 6, 7, 8, 3, 9}
 
 // Display and dispatch share stable shortcuts across project screens.
 var sidebarShortcuts = []struct {
@@ -15,7 +15,7 @@ var sidebarShortcuts = []struct {
 }{
 	{"1", 10}, {"2", 0}, {"3", 1}, {"4", 2}, {"5", 4},
 	{"6", 5}, {"7", 6}, {"8", 7}, {"9", 8}, {"0", 9},
-	{"f", 3}, {"b", 11},
+	{"f", 3}, {"b", 11}, {"p", 12},
 }
 
 func sidebarShortcutKey(action int) string {
@@ -61,7 +61,7 @@ func (m model) hasSidebar() bool {
 		return false
 	}
 	switch m.screen {
-	case "checks-menu", "ad-menu", "recon", "recon-host-menu", "desk", "networks", "guided-scan", "credentials", "settings", "jobs", "job-details", "project-results", "history", "interaction-menu", "action-menu":
+	case "checks-menu", "ad-menu", "recon", "recon-host-menu", "desk", "port-browser", "networks", "guided-scan", "credentials", "settings", "jobs", "job-details", "project-results", "history", "interaction-menu", "action-menu":
 		return true
 	}
 	return false
@@ -112,6 +112,30 @@ func (m model) viewSidebar(width int) string {
 }
 
 func (m model) updateSidebar(key string) (tea.Model, tea.Cmd, bool) {
+	if m.screen == "port-browser" {
+		switch key {
+		case "left", "shift+tab":
+			if !m.reconMenuFocus && m.portBrowserFocus > 0 {
+				m.portBrowserFocus--
+			} else if key == "shift+tab" && m.reconMenuFocus {
+				m.reconMenuFocus = false
+				m.portBrowserFocus = 1
+			} else {
+				m.reconMenuFocus = true
+			}
+			return m, nil, true
+		case "right", "tab":
+			if m.reconMenuFocus {
+				m.reconMenuFocus = false
+				m.portBrowserFocus = 0
+			} else if key == "tab" && m.portBrowserFocus == 1 {
+				m.reconMenuFocus = true
+			} else {
+				m.portBrowserFocus = 1
+			}
+			return m, nil, true
+		}
+	}
 	if m.screen == "job-details" && !m.reconMenuFocus && (key == "left" || key == "right") {
 		next, cmd := m.updateJobDetails(key)
 		return next, cmd, true
@@ -202,6 +226,9 @@ func (m model) sidebarBack() (tea.Model, tea.Cmd) {
 }
 
 func (m model) workspaceFooter() string {
+	if m.screen == "port-browser" && !m.reconMenuFocus {
+		return m.footer()
+	}
 	if m.screen == "job-details" && !m.reconMenuFocus {
 		return "←→ итог/ошибки/журнал · ↑↓ прокрутка · Enter результаты · Tab меню"
 	}

@@ -224,6 +224,17 @@ func (c *LDAPClient) Authenticate(username, password string) (bool, error) {
 	return true, nil
 }
 
+// AuthenticateNTLM sends exactly one bind, without simple/anonymous fallback.
+func (c *LDAPClient) AuthenticateNTLM(username, password string) (bool, error) {
+	if c.conn == nil {
+		return false, fmt.Errorf("no existing connection")
+	}
+	if err := c.conn.NTLMBind(c.Realm, username, password); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // AuthenticateWithNTLMHash authenticates via pass-the-hash (NTLM hash
 // instead of a plaintext password) — backs domain.Credential{Type:
 // "ntlm-hash"} in the credential-spray engine.

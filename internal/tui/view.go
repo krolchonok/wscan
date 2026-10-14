@@ -161,6 +161,8 @@ func (m model) View() string {
 		body = m.viewDesk(w)
 	case "service-inventory":
 		body = m.viewServiceInventory(w, m.bodyHeight())
+	case "port-browser":
+		body = m.viewPortBrowser(w)
 	case "networks":
 		body = m.viewNetworks(w)
 	case "action-menu":
@@ -377,6 +379,9 @@ func (m model) footer() string {
 	case "host-port-selection", "host-selection":
 		return "↑↓ выбор · Enter применить · Esc назад"
 	case "desk":
+		if m.deskCommandAvailable() {
+			return "m команда msfconsole · ←→ панели · ↑/↓ выбор · Enter подробности"
+		}
 		if m.width > 0 && m.width < 88 {
 			return "←→ панель · ↑/↓ выбор · Enter действие · v сервисы · Space выбор · f выбрать хосты"
 		}
@@ -386,6 +391,8 @@ func (m model) footer() string {
 			return "Ввод фильтра · Enter готово · Esc отменить ввод"
 		}
 		return "↑/↓ сервис · / фильтр · Space выбрать хост · a выбрать все · x очистить · Enter действие · Esc назад"
+	case "port-browser":
+		return "←→ порты/хосты · ↑↓ выбор · Enter результаты хоста · r все результаты порта · h машина · / поиск · Esc назад"
 	case "networks":
 		if m.width > 0 && m.width < 88 {
 			return "Enter действия · o хосты подсети · a CIDR · Space выбор · f выбрать хосты"
@@ -415,17 +422,27 @@ func (m model) footer() string {
 		if m.resultDeleteConfirm {
 			return "Enter подтвердить удаление · Esc отменить"
 		}
+		commandHint := ""
+		if len(m.findingSections()) > 3 {
+			commandHint = " · m команда"
+		}
+		if m.findingPane == 1 && m.findingSection == 3 && !m.findingRaw {
+			if m.clientSource == "web-terminal" {
+				return "Выделить и копировать в браузере · Tab раздел · ↑/↓ прокрутка · Esc список"
+			}
+			return "y копировать команду · Tab раздел · ↑/↓ прокрутка · Esc список"
+		}
 		if m.findingPane == 1 {
 			back := "список"
 			if m.findingDirectReturn {
 				back = "назад"
 			}
 			if m.splitResultDetails(m.width) {
-				return "←/→ панель · ↑/↓ выбор/прокрутка · Tab раздел · r отчёт · Esc " + back
+				return "←/→ панель · ↑/↓ выбор/прокрутка · Tab раздел" + commandHint + " · r отчёт · Esc " + back
 			}
-			return "Tab раздел · r отчёт · [/] находки · ↑/↓ прокрутка · Esc " + back
+			return "Tab раздел" + commandHint + " · r отчёт · [/] находки · ↑/↓ прокрутка · Esc " + back
 		}
-		return "Enter карточка · Del/d удалить · / поиск · f фильтр · Esc назад · Space отметить · v порты"
+		return "Enter карточка" + commandHint + " · p порты · v сервисы · Del/d удалить · / поиск · f фильтр · Esc назад · Space отметить"
 	case "finding-details":
 		return "↑/↓ выбор/прокрутка · Enter подробности · Del удалить · r технические данные · Esc назад"
 	case "scan-review":
@@ -707,6 +724,9 @@ func (m model) renderDetailsColumn(width, height int) string {
 	var body strings.Builder
 	compact := height < 18
 	body.WriteString(headingStyle.Render("РЕЗУЛЬТАТЫ") + "\n")
+	if m.deskCommandAvailable() {
+		body.WriteString(headingStyle.Render("m — команда msfconsole") + "\n")
+	}
 	host := m.currentHost()
 	if host == "" {
 		body.WriteString(mutedStyle.Render("Выбери хост слева"))
@@ -1134,13 +1154,18 @@ func (m model) viewInput(w int) string {
 	if m.inputAction == "scan-setting-value" {
 		label = settingLabels[m.scanReviewIndex-1]
 	}
-	value := m.input
 	if m.inputAction == "cred-secret" {
 		if m.credNewType == "ntlm-hash" {
 			label = "NTLM-хеш"
 		}
 	}
-	body := fmt.Sprintf("%s: %s▏\n", label, value)
+	if m.inputAction == "port-browser-filter" {
+		label = "Поиск порта или службы (22, 445/tcp, ssh)"
+	}
+	if m.inputAction == "guided-scope" && m.wizardProfile == 1 {
+		label = "AD-цели: IP, имя хоста или CIDR через пробел"
+	}
+	body := fmt.Sprintf("%s:\n%s\n\n←/→ курсор · Home/End · Enter сохранить · Esc назад\n", label, m.inputLine(max(1, w-4)))
 	return m.renderPanel(w, body)
 }
 

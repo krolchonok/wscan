@@ -32,6 +32,8 @@ func (m model) updateADMenu(key string) (tea.Model, tea.Cmd) {
 			m.wizardProfile = 1
 			m.wizardStep = 0
 			if m.wizardScope != "" {
+				m.wizardIndex = 2
+			} else {
 				m.wizardIndex = 1
 			}
 		case 1:

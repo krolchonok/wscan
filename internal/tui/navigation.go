@@ -5,6 +5,7 @@ package tui
 var workspaceTabs = []struct{ key, label, screen string }{
 	{"0", "Разведка", "recon"},
 	{"1", "Подсети", "networks"}, {"2", "Хосты", "desk"}, {"3", "Задачи", "jobs"}, {"4", "Взаимодействие", "interaction-menu"}, {"5", "Результаты", "project-results"},
+	{"p", "Порты", "port-browser"},
 }
 
 func (m model) workspaceNavigationAllowed() bool {
@@ -12,7 +13,7 @@ func (m model) workspaceNavigationAllowed() bool {
 		return false
 	}
 	switch m.screen {
-	case "recon", "overview", "desk", "networks", "jobs", "job-details", "interaction-menu", "project-results", "finding-details", "history":
+	case "recon", "overview", "desk", "port-browser", "networks", "jobs", "job-details", "interaction-menu", "project-results", "finding-details", "history":
 		return true
 	case "service-inventory":
 		return !m.serviceInventoryEditing
@@ -38,6 +39,8 @@ func (m model) navigateWorkspace(key string) (model, bool) {
 		m.openProjectInteractions()
 	case "5":
 		m.openProjectResults()
+	case "p":
+		m.openPortBrowser()
 	default:
 		return m, false
 	}
@@ -56,6 +59,7 @@ func workspaceSection(screen string) string {
 }
 func screenTitle(screen string) string {
 	titles := map[string]string{
+		"port-browser":         "Порты проекта",
 		"ad-controller-picker": "Контроллер домена",
 		"checks-menu":          "Проверки", "ad-menu": "AD", "recon": "Разведка", "overview": "Обзор", "guided-scan": "Начать проверку", "projects": "Проекты", "desk": "Хосты", "networks": "Подсети", "jobs": "Задачи", "job-details": "Итог задачи", "history": "История запусков", "project-results": "Результаты", "finding-details": "Результаты",
 		"interaction-menu": "Взаимодействие", "interaction-targets": "Выбор машины", "smb-setup": "Вход SMB", "smb-browser": "SMB-проводник", "ftp-setup": "Вход FTP", "ftp-browser": "FTP-проводник", "winrm-setup": "Вход WinRM", "winrm-browser": "WinRM-проводник", "winrm-shell": "Консоль WinRM",

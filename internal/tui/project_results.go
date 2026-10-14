@@ -91,6 +91,18 @@ func (m model) updateProjectResults(key string) (tea.Model, tea.Cmd) {
 		return m.confirmResultDelete(key)
 	}
 	switch key {
+	case "m":
+		if len(m.findingSections()) > 3 {
+			m.findingPane, m.findingSection = 1, 3
+			m.findingRaw, m.findingDetailFocus = false, true
+			m.findingOffset = 0
+		}
+		return m, nil
+	case "y":
+		if m.findingPane == 1 && m.findingSection == 3 && !m.findingRaw {
+			return m.copyFindingCommand()
+		}
+		return m, nil
 	case "pgup", "pgdown":
 		if m.findingPane == 0 {
 			step := m.resultListRows(m.width)
@@ -153,6 +165,9 @@ func (m model) updateProjectResults(key string) (tea.Model, tea.Cmd) {
 		m.serviceInventoryEditing = false
 		m.serviceInventorySelected = nil
 		m.screen = "service-inventory"
+		return m, nil
+	case "p":
+		m.openPortBrowser()
 		return m, nil
 	case "/":
 		m.startInput("project-results-search")
@@ -221,7 +236,7 @@ func (m model) updateProjectResults(key string) (tea.Model, tea.Cmd) {
 				if handled {
 					section := m.findingSection
 					m.selectFinding(index)
-					m.findingSection = section
+					m.findingSection = min(section, len(m.findingSections())-1)
 					return m, nil
 				}
 			}
@@ -242,11 +257,12 @@ func (m model) updateProjectResults(key string) (tea.Model, tea.Cmd) {
 		case "end":
 			m.findingOffset = last
 		case "tab", "shift+tab":
+			sections := len(m.findingSections())
 			step := 1
 			if key == "shift+tab" {
-				step = 2
+				step = sections - 1
 			}
-			m.findingSection = (m.findingSection + step) % 3
+			m.findingSection = (m.findingSection + step) % sections
 			m.findingRaw = false
 			m.findingOffset = 0
 		case "[", "]":

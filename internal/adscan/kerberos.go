@@ -148,10 +148,11 @@ func kerberosAccess(ctx context.Context, o AccessOptions) (AccessReport, error) 
 		if ldapOptions.LDAPPort == 0 {
 			ldapOptions.LDAPPort = 389
 		}
-		// Only an anonymous search: a selected credential is not tried here.
-		c, closeFn, e := accessLDAP(ctx, ldapOptions, ldapOptions.LDAPPort, false)
+		// An explicitly selected credential may collect names. The AS-REQs
+		// themselves never contain target passwords or pre-authentication.
+		c, closeFn, e := accessLDAP(ctx, ldapOptions, ldapOptions.LDAPPort, o.Credential.Username != "")
 		if e != nil {
-			return r, fmt.Errorf("имена не собраны: anonymous LDAP: %w; укажи список пользователей", e)
+			return r, fmt.Errorf("имена не собраны: LDAP: %w; укажи список пользователей", e)
 		}
 		limit := o.MaxObjects
 		if limit == 0 {
@@ -170,7 +171,7 @@ func kerberosAccess(ctx context.Context, o AccessOptions) (AccessReport, error) 
 			return r, err
 		}
 		if len(users) == 0 {
-			return r, fmt.Errorf("имена не собраны через anonymous LDAP; укажи список пользователей")
+			return r, fmt.Errorf("имена не собраны через LDAP; укажи список пользователей")
 		}
 	}
 	return runASREPAt(ctx, address, o.Domain, users, o, r)
@@ -353,10 +354,14 @@ func containsEtype(etypes []int32, etype int32) bool {
 }
 
 func exportASREPHashes(dir string, hashes []string) (string, error) {
+	return exportKerberosHashes(dir, "asrep", hashes)
+}
+
+func exportKerberosHashes(dir, prefix string, hashes []string) (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(dir, "asrep-*.hashcat")
+	f, err := os.CreateTemp(dir, prefix+"-*.hashcat")
 	if err != nil {
 		return "", err
 	}

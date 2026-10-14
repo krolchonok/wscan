@@ -2,6 +2,7 @@ package js
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -39,10 +40,12 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 	codes := map[string]int{}
 	next := 0
 	type sessionFixture struct {
-		marker string
-		output chan string
-		closed chan struct{}
-		once   sync.Once
+		marker   string
+		output   chan string
+		closed   chan struct{}
+		once     sync.Once
+		rawInput bool
+		input    []byte
 	}
 	sessions := map[string]*sessionFixture{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +65,7 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 					Stream struct {
 						Value     string `xml:",chardata"`
 						CommandID string `xml:"CommandId,attr"`
+						End       bool   `xml:"End,attr"`
 					} `xml:"Stream"`
 				} `xml:"Send"`
 				Signal struct {
@@ -99,7 +103,37 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 				units[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
 			}
 			script := string(utf16.Decode(units))
-			out, stderr, code := run(script)
+			if match := regexp.MustCompile(`\$__wscan_gz='([^']+)'`).FindStringSubmatch(script); len(match) == 2 {
+				if len(command) > 8000 {
+					t.Error("compressed command exceeds the compatibility limit")
+				}
+				compressed, err := base64.StdEncoding.DecodeString(match[1])
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "bad payload", 400)
+					return
+				}
+				reader, err := gzip.NewReader(bytes.NewReader(compressed))
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "bad gzip", 400)
+					return
+				}
+				decoded, err := io.ReadAll(reader)
+				reader.Close()
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "bad script", 400)
+					return
+				}
+				script = string(decoded)
+			}
+			var out, stderr string
+			var code int
+			rawInput := strings.Contains(script, "Invoke-Expression ([Console]::In.ReadToEnd())")
+			if !rawInput {
+				out, stderr, code = run(script)
+			}
 			mu.Lock()
 			next++
 			id := strconv.Itoa(next)
@@ -108,6 +142,12 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 				marker := regexp.MustCompile(`WSCAN:[a-f0-9]+:`).FindString(script)
 				sessions[id] = &sessionFixture{marker: marker, output: make(chan string, 1), closed: make(chan struct{})}
 			}
+			if rawInput {
+				if len(command) >= 8191 || !strings.Contains(script, "[Console]::InputEncoding = New-Object System.Text.UTF8Encoding") {
+					t.Error("long script wrapper exceeds cmd.exe limit or lacks UTF-8 input")
+				}
+				sessions[id] = &sessionFixture{rawInput: true, output: make(chan string, 1), closed: make(chan struct{})}
+			}
 			errors[id] = stderr
 			codes[id] = code
 			mu.Unlock()
@@ -115,14 +155,28 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 		case strings.HasSuffix(action, "/Send"):
 			id := request.Body.Send.Stream.CommandID
 			encoded, _ := base64.StdEncoding.DecodeString(request.Body.Send.Stream.Value)
+			mu.Lock()
+			session := sessions[id]
+			if session != nil && session.rawInput {
+				session.input = append(session.input, encoded...)
+				script := string(session.input)
+				mu.Unlock()
+				if request.Body.Send.Stream.End {
+					out, stderr, code := run(script)
+					mu.Lock()
+					outputs[id], errors[id], codes[id] = out, stderr, code
+					mu.Unlock()
+					session.once.Do(func() { close(session.closed) })
+				}
+				fmt.Fprint(w, soapWinRM(action+"Response", ""))
+				break
+			}
+			mu.Unlock()
 			scriptBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
 			if err != nil {
 				t.Error(err)
 			}
 			out, _, code := run(string(scriptBytes))
-			mu.Lock()
-			session := sessions[id]
-			mu.Unlock()
 			if session == nil {
 				t.Errorf("stdin sent to unknown process %s", id)
 				break
@@ -152,6 +206,11 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 				case out = <-session.output:
 				case <-session.closed:
 					state = "Done"
+					if session.rawInput {
+						mu.Lock()
+						out, stderr, code = outputs[id], errors[id], codes[id]
+						mu.Unlock()
+					}
 				case <-time.After(100 * time.Millisecond):
 				}
 			}
@@ -166,6 +225,35 @@ func winRMFixture(t *testing.T, run func(string) (string, string, int)) (WinRMOp
 	return WinRMOptions{Host: u.Hostname(), Port: port, HTTPS: true, Insecure: true, Timeout: time.Second, Credential: domain.Credential{Type: "password", Username: "fixture", Secret: "fixture-password"}, transportFactory: func(dial func(string, string) (net.Conn, error)) winrm.Transporter {
 		return winrm.NewClientWithDial(dial)
 	}}, server.Close
+}
+
+func TestWindowsAuditWinRMCollector(t *testing.T) {
+	opts, close := winRMFixture(t, func(script string) (string, string, int) {
+		if script != windowsAuditScript || !strings.Contains(script, `'SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest'`) || !strings.Contains(script, `-Namespace 'root\MicrosoftDNS'`) {
+			t.Error("Windows collector did not reach the expected registry/WMI paths")
+		}
+		return `{"computer":{"data":{"domain_role":1}},"wdigest":{"data":{"present":true,"value":0}},"local_policy":{"data":{"lockout_threshold":3}}}`, "", 0
+	})
+	defer close()
+	r, err := CollectWindowsAudit(context.Background(), opts)
+	if err != nil || r.Policy == nil || r.Policy.Source != "local" || r.Policy.LockoutThreshold == nil || *r.Policy.LockoutThreshold != 3 {
+		t.Fatalf("audit=%+v err=%v", r, err)
+	}
+}
+
+func TestWinRMLongUnicodeScriptCompressed(t *testing.T) {
+	script := windowsAuditScript + "\n#" + strings.Repeat("Контроль", 6000)
+	opts, close := winRMFixture(t, func(received string) (string, string, int) {
+		if received != script {
+			t.Errorf("stdin lost bytes: received %d, expected %d", len(received), len(script))
+		}
+		return "ok", "", 0
+	})
+	defer close()
+	out, stderr, code, err := RunWinRMPowerShell(context.Background(), opts, script, 100)
+	if err != nil || code != 0 || out != "ok" || stderr != "" {
+		t.Fatalf("out=%q stderr=%q code=%d err=%v", out, stderr, code, err)
+	}
 }
 
 func TestWinRMDirectoryJSONAndLiteralPaths(t *testing.T) {

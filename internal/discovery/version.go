@@ -175,6 +175,10 @@ func identifyBanner(service domain.Service, banner string) domain.Service {
 
 func isHTTPService(service domain.Service) bool {
 	name := strings.ToLower(service.Name)
+	// RPC over HTTP carries RPC PDUs; ordinary Web checks do not apply.
+	if name == "ncacn_http" || name == "rpc-http" {
+		return false
+	}
 	return strings.Contains(name, "http") || service.Port == 80 || service.Port == 443 || service.Port == 8000 || service.Port == 8008 || service.Port == 8080 || service.Port == 8081 || service.Port == 8443
 }
 

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"wscan/internal/adscan"
 	"wscan/internal/domain"
 	"wscan/internal/engine/js"
 )
@@ -48,13 +49,47 @@ var moduleCatalog = []ModuleInfo{
 	{"ldap-trusted-for-delegation", "ldap", "Users trusted for unconstrained Kerberos delegation"},
 	{"ldap-domain-sid", "ldap", "The domain's SID"},
 	{"ldap-metadata", "ldap", "Root DSE metadata (domain/forest functionality, DC hostname)"},
+	{"ldap-passpolicy", "ldap", "Парольная политика и PSO: длина, сложность, возраст, история и блокировки"},
 	{"smb-shares", "smb", "Шары и доступ на чтение; запись не проверяется"},
 	{"winrm-whoami", "winrm", "Run \"whoami\" over an authenticated WinRM session"},
+	{"windows-audit", "winrm", "WDigest, локальная политика, обновления, NIC/routes, firewall и DNS-конфигурация"},
+	{"openwrt-audit", "ssh", "Чтение OpenWrt release, firewall и маршрутов через SSH"},
 	{"winrm-exec", "winrm", "Run an operator-supplied command over WinRM (requires args[\"command\"])"},
 }
 
 var moduleCatalogIndex = func() map[string]ModuleFunc {
 	index := map[string]ModuleFunc{
+		"ldap-passpolicy": func(ctx context.Context, timeout time.Duration, host string, port int, cred domain.Credential, _ map[string]string) (any, error) {
+			r, err := adscan.RunAccess(ctx, adscan.AccessOptions{Host: host, Domain: cred.Domain, LDAPPort: port, Mode: "passpolicy", Credential: cred, MaxObjects: 5000})
+			if err != nil && len(r.Checks) > 0 {
+				return r, &postAuthError{err}
+			}
+			return r, err
+		},
+		"windows-audit": func(ctx context.Context, timeout time.Duration, host string, port int, cred domain.Credential, _ map[string]string) (any, error) {
+			return js.CollectWindowsAudit(ctx, js.WinRMOptions{Host: host, Port: port, HTTPS: port == 5986, Credential: cred, Timeout: timeout})
+		},
+		"openwrt-audit": func(ctx context.Context, timeout time.Duration, host string, port int, cred domain.Credential, _ map[string]string) (any, error) {
+			c := js.NewSSHClient(ctx, timeout)
+			defer c.Close()
+			var ok bool
+			var err error
+			if cred.Type == "ssh-key" {
+				ok, err = c.ConnectWithKey(host, port, cred.Username, cred.Secret)
+			} else if cred.Type == "password" {
+				ok, err = c.ConnectPassword(host, port, cred.Username, cred.Secret)
+			} else {
+				return nil, fmt.Errorf("SSH: требуется пароль или ключ")
+			}
+			if err != nil || !ok {
+				return nil, err
+			}
+			out, err := c.RunLimited(`if [ -r /etc/openwrt_release ]; then cat /etc/openwrt_release; else echo 'OpenWrt release unavailable'; fi; if command -v uci >/dev/null 2>&1; then uci -q show firewall; fi; ip route show; if command -v nft >/dev/null 2>&1; then nft list ruleset; elif command -v iptables-save >/dev/null 2>&1; then iptables-save; fi`, 1024*1024)
+			if err != nil {
+				return out, &postAuthError{err}
+			}
+			return out, nil
+		},
 		"ldap-users":                    ldapModuleFunc(func(c *js.LDAPClient) (any, error) { return c.GetADUsers() }),
 		"ldap-active-users":             ldapModuleFunc(func(c *js.LDAPClient) (any, error) { return c.GetADActiveUsers() }),
 		"ldap-admins":                   ldapModuleFunc(func(c *js.LDAPClient) (any, error) { return c.GetADAdmins() }),
@@ -164,7 +199,7 @@ func ldapModuleFunc(call func(c *js.LDAPClient) (any, error)) ModuleFunc {
 		if cred.Type == "ntlm-hash" {
 			ok, err = c.AuthenticateWithNTLMHash(cred.Username, cred.Secret)
 		} else {
-			ok, err = c.Authenticate(cred.Username, cred.Secret)
+			ok, err = c.AuthenticateNTLM(cred.Username, cred.Secret)
 		}
 		if err != nil {
 			return nil, err
@@ -172,7 +207,18 @@ func ldapModuleFunc(call func(c *js.LDAPClient) (any, error)) ModuleFunc {
 		if !ok {
 			return nil, fmt.Errorf("ldap authentication failed")
 		}
-		return call(c)
+		metadata, err := c.CollectMetadata()
+		if err != nil {
+			return nil, &postAuthError{err}
+		}
+		if metadata.DefaultNamingContext != "" {
+			c.BaseDN = metadata.DefaultNamingContext
+		}
+		data, err := call(c)
+		if err != nil {
+			return data, &postAuthError{err}
+		}
+		return data, nil
 	}
 }
 
@@ -200,6 +246,9 @@ func (e *Engine) RunModule(ctx context.Context, p domain.Project, target domain.
 	}
 
 	data, runErr := fn(ctx, timeout, target.Host, target.Port, cred, args)
+	if audit, ok := data.(js.WindowsAudit); ok && audit.Policy != nil {
+		e.RememberLocalPolicy(p.ID, *audit.Policy)
+	}
 	result := &domain.ModuleResult{
 		Target:   target.Host,
 		Port:     target.Port,
@@ -220,7 +269,16 @@ func (e *Engine) RunModule(ctx context.Context, p domain.Project, target domain.
 	if errors.As(runErr, &queryErr) {
 		authenticated = true
 	}
-	if err := e.store.RecordAttempt(ctx, p.ID, addr, cred.Username, target.Protocol, authenticated); err != nil {
+	var auditErr *js.AuthenticatedAuditError
+	if errors.As(runErr, &auditErr) {
+		authenticated = true
+	}
+	accountKey, protocol := cred.Username, target.Protocol
+	if cred.Local {
+		accountKey = localAttemptKey(target.Host, cred.Username)
+		protocol += "-local"
+	}
+	if err := e.store.RecordAttempt(ctx, p.ID, addr, accountKey, protocol, authenticated); err != nil {
 		return result, err
 	}
 	return result, nil

@@ -172,7 +172,7 @@ func tryLogin(ctx context.Context, protocol string, timeout time.Duration, host 
 		if isHash {
 			return c.AuthenticateWithNTLMHash(cred.Username, cred.Secret)
 		}
-		return c.Authenticate(cred.Username, cred.Secret)
+		return c.AuthenticateNTLM(cred.Username, cred.Secret)
 	case "winrm":
 		return js.NewWinRMClient(ctx, timeout).Connect(host, port, cred.Domain, cred.Username, cred.Secret)
 	default:
