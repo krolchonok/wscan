@@ -29,6 +29,34 @@ var adAccessModes = []struct{ id, name string }{
 	{"ldap-security", "LDAP signing / LDAPS channel binding: проба с выбранной учёткой"},
 	{"bloodhound-ce", "BloodHound CE: удалённый сбор домена → ZIP (LDAP, без агента)"},
 	{"kerberoast", "Kerberoasting: учётка / без pre-auth / готовый TGT → Hashcat"},
+	{"ldap-anonymous", "LDAP RootDSE: анонимное определение домена и контроллера"},
+	{"sysvol-auth", "SYSVOL / NETLOGON: проверка GPP с выбранной учёткой"},
+}
+
+func anonymousADMode(mode string) bool {
+	return mode == "dns" || mode == "asrep" || mode == "sysvol" || mode == "ldap-anonymous"
+}
+
+func adCheckIndices() []int {
+	var indices []int
+	for _, anonymous := range []bool{true, false} {
+		for i, mode := range adAccessModes {
+			if i >= 2 && anonymousADMode(mode.id) == anonymous {
+				indices = append(indices, i)
+			}
+		}
+	}
+	return indices
+}
+
+func nextADCheck(current, delta int) int {
+	indices := adCheckIndices()
+	for i, index := range indices {
+		if index == current {
+			return indices[min(len(indices)-1, max(0, i+delta))]
+		}
+	}
+	return indices[0]
 }
 
 func (m *model) openADAccess() {
@@ -75,9 +103,9 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 		m.screen = m.adAccessReturn
 		m.message = ""
 	case "up", "k":
-		m.adAccessIndex = max(2, m.adAccessIndex-1)
+		m.adAccessIndex = nextADCheck(m.adAccessIndex, -1)
 	case "down", "j":
-		m.adAccessIndex = min(len(adAccessModes)-1, m.adAccessIndex+1)
+		m.adAccessIndex = nextADCheck(m.adAccessIndex, 1)
 	case "v":
 		return m.toggleResponderDebug()
 	case "l":
@@ -89,7 +117,7 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 				m.adWindowsPort = 5986
 			}
 		}
-		if mode == "directory" || mode == "passpolicy" || mode == "ldap-security" || mode == "kerberoast" {
+		if mode == "directory" || mode == "passpolicy" || mode == "ldap-security" || mode == "kerberoast" || mode == "ldap-anonymous" {
 			if m.adAccessLDAPPort == 389 {
 				m.adAccessLDAPPort = 636
 			} else {
@@ -135,8 +163,7 @@ func (m model) updateADAccess(key string) (tea.Model, tea.Cmd) {
 	case "r":
 		m.startInput("ad-coerce-callback")
 	case "d":
-		m.startInput("ad-access-domain")
-		m.input = m.adAccessDomain
+		m.openADDomainPicker()
 	case "c":
 		if len(m.adAccessCreds) == 0 {
 			m.message = "В проекте нет сохранённых учёток; нажми c в окне Credentials, затем вернись сюда"
@@ -172,13 +199,13 @@ func (m model) adAccessJobRunning() bool {
 }
 
 func (m model) viewADAccess(w int) string {
-	if adAccessModes[m.adAccessIndex].id == "kerberoast" {
-		return m.viewKerberoastSetup(w)
-	}
 	body := headingStyle.Render("Проверки AD") + "\n\n"
-	cred := "не выбрана (anonymous для SYSVOL)"
+	cred := "не выбрана"
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = credIdentLabel(m.adAccessCreds[m.adAccessCred])
+	}
+	if anonymousADMode(adAccessModes[m.adAccessIndex].id) {
+		cred = "не используется — проверка без учётки"
 	}
 	domainLabel := valueOr(m.adAccessDomain, "не задан")
 	if m.adAccessAutoBusy && m.adAccessDomain == "" {
@@ -205,16 +232,53 @@ func (m model) viewADAccess(w int) string {
 	body += "↑/↓ выбрать проверку · Enter запустить · Esc назад\n\n"
 	if adAccessModes[m.adAccessIndex].id == "windows" {
 		body += fmt.Sprintf("WinRM/%d · l сменить HTTP/HTTPS\n\n", m.adWindowsPort)
-	} else if adAccessModes[m.adAccessIndex].id == "directory" || adAccessModes[m.adAccessIndex].id == "passpolicy" || (adAccessModes[m.adAccessIndex].id == "kerberoast" && m.adKerberoastAuth == 0) {
+	} else if adAccessModes[m.adAccessIndex].id == "directory" || adAccessModes[m.adAccessIndex].id == "passpolicy" || adAccessModes[m.adAccessIndex].id == "ldap-anonymous" || (adAccessModes[m.adAccessIndex].id == "kerberoast" && m.adKerberoastAuth == 0) {
 		body += fmt.Sprintf("LDAP/%d · l сменить порт\n\n", m.adAccessLDAPPort)
 	}
-
-	for i, row := range adAccessModes {
-		if i < 2 {
-			continue
+	if adAccessModes[m.adAccessIndex].id == "kerberoast" {
+		modes := []string{"Пароль / NT-хеш", "Без пароля: учётка без pre-auth", "Готовый TGT"}
+		auto := "Авто: AES → RC4"
+		if m.adKerberoastAuth == 1 {
+			auto = "Авто: RC4 → AES"
 		}
-		body += renderListRow(row.name, i == m.adAccessIndex, w)
+		body += "a Режим: " + modes[m.adKerberoastAuth] + " · e Шифрование: " + []string{auto, "Только RC4", "Только AES"}[m.adKerberoastEtypes] + "\n"
+		if m.adKerberoastAuth == 1 {
+			body += "u Логин: " + valueOr(m.adKerberoastNoPreauthUser, "не задан") + " · "
+		} else if m.adKerberoastAuth == 2 {
+			body += "t Файл TGT: " + valueOr(m.adKerberoastTGTFile, "не задан") + " · "
+		}
+		spns := "активные пользовательские SPN из LDAP"
+		if m.adKerberoastAuth != 0 {
+			spns = "укажи SPN или @файл"
+		}
+		body += "s SPN: " + valueOr(m.adKerberoastSPNs, spns) + "\n"
+		if m.adKerberoastAuth != 0 {
+			body += "Для AES: SPN|логин владельца; RC4 — SPN\n"
+		}
+		body += "\n"
 	}
+
+	group := ""
+	var menuLines []string
+	selectedLine := 0
+	for _, i := range adCheckIndices() {
+		row := adAccessModes[i]
+		heading := "Нужна учётка / билет"
+		if anonymousADMode(row.id) {
+			heading = "Без учётки (анонимно)"
+		}
+		if heading != group {
+			menuLines = append(menuLines, heading)
+			group = heading
+		}
+		if i == m.adAccessIndex {
+			selectedLine = len(menuLines)
+		}
+		menuLines = append(menuLines, strings.TrimSuffix(renderListRow(row.name, i == m.adAccessIndex, w), "\n"))
+	}
+	rows := max(1, m.bodyHeight()-2-strings.Count(body, "\n"))
+	start := min(max(0, selectedLine-rows+1), max(0, len(menuLines)-rows))
+	body += strings.Join(menuLines[start:min(len(menuLines), start+rows)], "\n")
 	if m.adAccessJobRunning() {
 		body += "\n\nВыполняется проверка… Esc — отменить"
 	}
@@ -242,7 +306,7 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 	if adAccessModes[m.adAccessIndex].id == "asrep" {
 		return m.startASREP()
 	}
-	if strings.TrimSpace(m.adAccessHost) == "" || (strings.TrimSpace(m.adAccessDomain) == "" && adAccessModes[m.adAccessIndex].id != "windows") {
+	if strings.TrimSpace(m.adAccessHost) == "" || (strings.TrimSpace(m.adAccessDomain) == "" && adAccessModes[m.adAccessIndex].id != "windows" && adAccessModes[m.adAccessIndex].id != "ldap-anonymous") {
 		m.message = "Укажи хост контроллера (h) и домен (d)"
 		return m, nil
 	}
@@ -250,6 +314,12 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 	var cred domain.Credential
 	if m.adAccessCred >= 0 && m.adAccessCred < len(m.adAccessCreds) {
 		cred = m.adAccessCreds[m.adAccessCred]
+	}
+	if anonymousADMode(mode) {
+		cred = domain.Credential{}
+	} else if mode != "kerberoast" && cred.Username == "" {
+		m.message = "Выбери сохранённую учётку (c) для этой проверки. Без учётки доступны LDAP RootDSE, DNS, AS-REP и SYSVOL."
+		return m, nil
 	}
 	port := m.adAccessLDAPPort
 	if port != 389 && port != 636 {
@@ -284,7 +354,24 @@ func (m model) startADAccess() (tea.Model, tea.Cmd) {
 	m.adAccessJobID = m.jobSeq + 1
 	m.message = ""
 	m.launch("ad-access", "AD "+mode+" · "+o.Host, []string{o.Host}, worker.runADAccess(o))
+	m.openADJob(adscan.AccessDiagnostics(o)...)
 	return m, nil
+}
+
+func (m *model) openADJob(options ...string) {
+	m.adAccessJobID = m.jobSeq
+	for i, j := range m.jobs {
+		if j.id == m.adAccessJobID {
+			j.scope = strings.Join(j.targets, ", ")
+			j.checks = []string{j.label}
+			j.options = append(j.options, options...)
+			m.initJobLog(j)
+			m.jobIndex = i
+			m.jobDetailRaw, m.jobDetailErrors, m.logOffset = true, false, -1
+			m.screen = "job-details"
+			return
+		}
+	}
 }
 
 func (m model) runADAccess(o adscan.AccessOptions) runFunc {
@@ -293,6 +380,9 @@ func (m model) runADAccess(o adscan.AccessOptions) runFunc {
 	}
 	return func(ctx context.Context, emit progressReporter) (engine.Result, error) {
 		emit("AD " + o.Mode + ": " + o.Host)
+		for _, option := range adscan.AccessDiagnostics(o) {
+			emit(option)
+		}
 		runID, err := m.store.StartRun(ctx, m.current.ID)
 		if err != nil {
 			return engine.Result{}, err
@@ -336,6 +426,16 @@ func (m model) runADAccess(o adscan.AccessOptions) runFunc {
 		result := engine.Result{RunID: runID, TargetsScanned: 1, Findings: findings}
 		if runErr != nil {
 			result.Errors = []string{runErr.Error()}
+		}
+		for _, check := range report.Checks {
+			if check.ID == "execution" {
+				continue
+			}
+			message := check.Name + " [" + check.State + "]: " + check.Evidence
+			emit(message)
+			if check.State == "error" || check.State == "incomplete" {
+				result.Errors = append(result.Errors, message)
+			}
 		}
 		return result, runErr
 	}

@@ -153,6 +153,8 @@ func (m model) View() string {
 		body = m.viewASREPSetup(w)
 	case "ad-controller-picker":
 		body = m.viewADControllerPicker(w)
+	case "ad-domain-picker":
+		body = m.viewADDomainPicker(w)
 	case "host-port-selection":
 		body = m.viewHostPortSelection(w)
 	case "host-selection":
@@ -300,6 +302,8 @@ func (m model) footer() string {
 		return "↑/↓ пункт · Enter выбрать · ← назад · x остановить"
 	case "ad-controller-picker":
 		return "↑/↓ машина · Enter выбрать контроллер · ← назад"
+	case "ad-domain-picker":
+		return "↑/↓ домен · Enter выбрать домен · ← назад"
 	case "interaction-targets":
 		return "↑/↓ машина · Enter выбрать · Esc назад"
 	case "mysql-setup", "pg-setup":
@@ -409,18 +413,18 @@ func (m model) footer() string {
 	case "disc-options":
 		return "↑/↓ параметр · Enter скан · ←→/Space изменить · e ввод"
 	case "jobs":
-		return "↑/↓ задача   Enter подробности и лог   x отменить   c очистить   e экспорт   Esc назад"
+		return "↑/↓ задача · Enter лог · x отменить · c очистить · d диагностика · e отчёт · Esc назад"
 	case "job-details":
 		if m.jobDetailErrors {
-			return "←/→ вкладки · ↑/↓ ошибки · Home/End · Enter результаты · Esc задачи"
+			return "←/→ вкладки · ↑/↓ ошибки · Home/End · d диагностика · Enter результаты · Esc задачи"
 		}
 		if !m.jobDetailRaw {
 			if m.jobIndex >= 0 && m.jobIndex < len(m.jobs) && m.jobs[m.jobIndex].opensHostResults() {
-				return "Enter хосты и порты · r журнал · x отменить · e экспорт · Esc задачи"
+				return "Enter хосты и порты · r журнал · x отменить · d диагностика · e отчёт · Esc задачи"
 			}
-			return "←/→ итог/ошибки/журнал · Enter результаты · x отменить · e экспорт · Esc задачи"
+			return "←/→ итог/ошибки/журнал · Enter результаты · x отменить · d диагностика · e отчёт · Esc задачи"
 		}
-		return "↑/↓ журнал   Enter результаты   r журнал/итог   x отменить   e экспорт   Esc задачи"
+		return "↑/↓ журнал · Enter результаты · r итог · x отменить · d диагностика · e отчёт · Esc задачи"
 	case "project-results":
 		if m.resultDeleteConfirm {
 			return "Enter подтвердить удаление · Esc отменить"

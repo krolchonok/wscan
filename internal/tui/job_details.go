@@ -89,8 +89,8 @@ func (m model) updateJobDetails(key string) (tea.Model, tea.Cmd) {
 		if j.active() && j.cancel != nil {
 			j.cancel()
 		}
-	case "e":
-		return m.updateJobs("e")
+	case "e", "d":
+		return m.updateJobs(key)
 	case "enter":
 		j.seen = true
 		if j.projectID != m.current.ID {
@@ -151,7 +151,11 @@ func (m model) viewJobDetails(w int) string {
 	} else {
 		lines = append(lines, strings.Join(j.options, " · "))
 	}
-	lines = append(lines, "Лог: "+j.logPath)
+	logLabel := j.logPath
+	if logLabel == "" {
+		logLabel = "сохранён в истории задачи"
+	}
+	lines = append(lines, "Лог: "+logLabel)
 	if j.logError != "" {
 		lines[len(lines)-1] = "Ошибка записи лога: " + j.logError
 	}
@@ -178,6 +182,9 @@ func (m model) viewJobSummary(w int, j *job) string {
 		project = fmt.Sprintf("#%d", j.projectID)
 	}
 	lines := []string{fmt.Sprintf("Задача #%d · %s", j.id, j.label), "Проект: " + project, "Область: " + j.scope, fmt.Sprintf("Состояние: %s · %s", j.statusLabel(), j.duration().Round(time.Second)), j.progressText(min(20, max(3, w/6))) + " " + j.stage, m.jobDetailTabs(j)}
+	if j.errText != "" {
+		lines = append(lines, strings.Split(ansi.Wrap("Причина: "+ansi.Strip(j.errText), max(1, w-6), ""), "\n")...)
+	}
 	if j.result != nil {
 		findings := groupedProjectResults(orderedResults(j.result.Findings))
 		lines = append(lines, "РЕЗУЛЬТАТ")

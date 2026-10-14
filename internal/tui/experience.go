@@ -453,6 +453,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateASREPSetup(key)
 		case "ad-controller-picker":
 			return m.updateADControllerPicker(key)
+		case "ad-domain-picker":
+			return m.updateADDomainPicker(key)
 		case "host-port-selection":
 			return m.updateHostPortSelection(key)
 		case "host-selection":
@@ -1182,6 +1184,15 @@ func (m model) updateJobs(key string) (tea.Model, tea.Cmd) {
 				m.message = err.Error()
 			} else {
 				m.message = "Отчёты сохранены в reports/"
+			}
+		}
+	case "d":
+		if m.jobIndex >= 0 && m.jobIndex < len(rows) {
+			path, err := m.exportJobDiagnostics(rows[m.jobIndex])
+			if err != nil {
+				m.message = "Экспорт диагностики: " + err.Error()
+			} else {
+				m.message = "Диагностика для передачи: " + path
 			}
 		}
 	}

@@ -3,13 +3,54 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 	"wscan/internal/engine"
 	"wscan/internal/storage"
 )
+
+func TestFailedJobPersistsCauseAndCheckErrorsInJournal(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m, err := NewManager(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := "LDAPS connection reset by peer"
+	j, err := m.Start(JobRequest{Label: "LDAP"}, "", func(context.Context, Reporter) (Outcome, error) {
+		return Outcome{Result: engine.Result{Errors: []string{"DNS AXFR: EOF"}, Skipped: []string{"AS-REP: no KDC"}}}, errors.New(cause)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitJob(t, m, j.ID)
+	if finished.Status != "failed" {
+		t.Fatalf("%+v", finished)
+	}
+	m.Close()
+	restored, err := NewManager(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	got, _ := restored.Get(j.ID)
+	var journal strings.Builder
+	for _, event := range got.Journal {
+		journal.WriteString(event.Message + "\n")
+	}
+	for _, want := range []string{cause, "DNS AXFR: EOF", "Пропущено: AS-REP: no KDC"} {
+		if !strings.Contains(journal.String(), want) {
+			t.Fatalf("diagnostic lost after restart: %s", journal.String())
+		}
+	}
+}
 
 func waitJob(t *testing.T, m *Manager, id int, limit ...time.Duration) Job {
 	t.Helper()

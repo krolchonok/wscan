@@ -16,6 +16,10 @@ import (
 // AuditDNS checks only the selected server/zone from this scanner's address.
 // RA is an advertised capability; it does not establish Internet-wide access.
 func AuditDNS(ctx context.Context, host, zone string, port int, timeout time.Duration) (AccessReport, error) {
+	return auditDNS(ctx, host, zone, port, timeout, nil)
+}
+
+func auditDNS(ctx context.Context, host, zone string, port int, timeout time.Duration, progress func(string)) (AccessReport, error) {
 	r := AccessReport{Host: host, Mode: "dns"}
 	if port == 0 {
 		port = 53
@@ -28,7 +32,14 @@ func AuditDNS(ctx context.Context, host, zone string, port int, timeout time.Dur
 		return r, fmt.Errorf("укажи корректную DNS-зону")
 	}
 	r.Endpoint = "tcp://" + net.JoinHostPort(host, strconv.Itoa(port))
+	if progress != nil {
+		progress("DNS AXFR · " + r.Endpoint + " · зона " + name.String() + " · timeout=" + timeout.String())
+	}
+	started := time.Now()
 	count, state, evidence := auditAXFR(ctx, host, port, name, timeout)
+	if progress != nil {
+		progress(fmt.Sprintf("DNS AXFR · state=%s records=%d elapsed=%s · %s", state, count, time.Since(started).Round(time.Millisecond), evidence))
+	}
 	r.add("dns-axfr", "DNS AXFR", state, func() string {
 		if state == "confirmed" {
 			return "medium"
@@ -37,6 +48,9 @@ func AuditDNS(ctx context.Context, host, zone string, port int, timeout time.Dur
 	}(), fmt.Sprintf("%s; записей: %d; область: %s", evidence, count, name.String()))
 	qctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if progress != nil {
+		progress("DNS · объявленная рекурсия · " + r.Endpoint)
+	}
 	c, id, e := dnsAuditConnection(qctx, host, port, dnsmessage.Question{Name: name, Type: dnsmessage.TypeSOA, Class: dnsmessage.ClassINET}, true)
 	if e != nil {
 		r.add("dns-recursion", "DNS recursion capability", "error", "info", e.Error())
@@ -45,7 +59,9 @@ func AuditDNS(ctx context.Context, host, zone string, port int, timeout time.Dur
 	defer c.Close()
 	stop := context.AfterFunc(qctx, func() { _ = c.Close() })
 	defer stop()
+	started = time.Now()
 	m, e := readDNSMessage(c, id)
+	e = accessFailure("DNS SOA read response "+r.Endpoint, started, e)
 	if e != nil {
 		r.add("dns-recursion", "DNS recursion capability", "error", "info", e.Error())
 	} else if m.Header.RecursionAvailable {
@@ -53,10 +69,15 @@ func AuditDNS(ctx context.Context, host, zone string, port int, timeout time.Dur
 	} else {
 		r.add("dns-recursion", "DNS recursion capability", "negative", "info", "RA=0 в ответе выбранному клиенту; глобальная политика неизвестна")
 	}
+	if progress != nil && e == nil {
+		progress(fmt.Sprintf("DNS SOA · RCODE=%d RA=%t AA=%t elapsed=%s", m.Header.RCode, m.Header.RecursionAvailable, m.Header.Authoritative, time.Since(started).Round(time.Millisecond)))
+	}
 	return r, ctx.Err()
 }
 
 func dnsAuditConnection(ctx context.Context, host string, port int, q dnsmessage.Question, recursive bool) (net.Conn, uint16, error) {
+	started := time.Now()
+	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
 	var seed [2]byte
 	if _, e := rand.Read(seed[:]); e != nil {
 		return nil, 0, e
@@ -69,7 +90,7 @@ func dnsAuditConnection(ctx context.Context, host string, port int, q dnsmessage
 	}
 	c, e := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if e != nil {
-		return nil, 0, e
+		return nil, 0, accessFailure("DNS TCP connect "+endpoint, started, e)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.SetDeadline(deadline)
@@ -79,7 +100,7 @@ func dnsAuditConnection(ctx context.Context, host string, port int, q dnsmessage
 	packet = append(h, packet...)
 	if _, e = c.Write(packet); e != nil {
 		c.Close()
-		return nil, 0, e
+		return nil, 0, accessFailure("DNS TCP send query "+endpoint, started, e)
 	}
 	return c, id, nil
 }
@@ -117,10 +138,12 @@ func auditAXFR(ctx context.Context, host string, port int, name dnsmessage.Name,
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
 	count := 0
+	started := time.Now()
 	var first *dnsmessage.SOAResource
 	for messages := 0; messages < 128; messages++ {
 		m, e := readDNSMessage(c, id)
 		if e != nil {
+			e = accessFailure(fmt.Sprintf("DNS AXFR read response %s:%d messages=%d records=%d", host, port, messages, count), started, e)
 			state := "error"
 			if count > 0 {
 				state = "incomplete"

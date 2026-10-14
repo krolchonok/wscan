@@ -94,8 +94,7 @@ func (m model) updateASREPSetup(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		switch m.adASREPIndex {
 		case 0:
-			m.startInput("ad-access-domain")
-			m.input = m.adAccessDomain
+			m.openADDomainPicker()
 		case 1:
 			m.openADControllerPicker()
 		case 2:
@@ -193,11 +192,15 @@ func (m model) startASREP() (tea.Model, tea.Cmd) {
 	worker := m
 	m.adAccessJobID, m.message = m.jobSeq+1, ""
 	m.launch("ad-access", "AS-REP · "+o.Domain, []string{target}, worker.runASREP(o))
+	m.openADJob(adscan.AccessDiagnostics(o)...)
 	return m, nil
 }
 
 func (m model) runASREP(o adscan.AccessOptions) runFunc {
 	return func(ctx context.Context, emit progressReporter) (engine.Result, error) {
+		for _, option := range adscan.AccessDiagnostics(o) {
+			emit(option)
+		}
 		runID, err := m.store.StartRun(ctx, m.current.ID)
 		if err != nil {
 			return engine.Result{}, err

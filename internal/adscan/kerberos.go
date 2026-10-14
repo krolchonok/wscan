@@ -86,10 +86,16 @@ func resolveASREPKDC(ctx context.Context, o AccessOptions) (string, error) {
 		resolvers = append(resolvers, net.DefaultResolver)
 	}
 	var failures []string
-	for _, resolver := range resolvers {
+	for i, resolver := range resolvers {
+		server := "system resolver"
+		if i < len(o.DNS.Servers) {
+			server = o.DNS.Servers[i]
+		}
+		accessProgress(o, "AS-REP · DNS SRV _kerberos._tcp."+o.Domain+" · resolver="+server+" timeout=3s")
 		queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		_, records, err := resolver.LookupSRV(queryCtx, "kerberos", "tcp", o.Domain+".")
 		if err == nil {
+			accessProgress(o, fmt.Sprintf("AS-REP · DNS SRV · resolver=%s records=%d", server, len(records)))
 			for _, record := range records {
 				if record.Target == "." || record.Port == 0 {
 					continue
@@ -99,6 +105,11 @@ func resolveASREPKDC(ctx context.Context, o AccessOptions) (string, error) {
 					cancel()
 					return net.JoinHostPort(ips[0].IP.String(), fmt.Sprint(record.Port)), nil
 				}
+				if lookupErr != nil {
+					failures = append(failures, "resolver="+server+" lookup="+record.Target+": "+lookupErr.Error())
+				} else {
+					failures = append(failures, "resolver="+server+" lookup="+record.Target+": IP-адреса не получены")
+				}
 			}
 		}
 		cancel()
@@ -106,7 +117,7 @@ func resolveASREPKDC(ctx context.Context, o AccessOptions) (string, error) {
 			return "", ctx.Err()
 		}
 		if err != nil {
-			failures = append(failures, err.Error())
+			failures = append(failures, "resolver="+server+": "+err.Error())
 		}
 	}
 	return "", fmt.Errorf("KDC не найден через _kerberos._tcp.%s; проверь DNS или укажи хост: %s", o.Domain, strings.Join(failures, "; "))
@@ -136,13 +147,16 @@ func kerberosAccess(ctx context.Context, o AccessOptions) (AccessReport, error) 
 	if err != nil {
 		return r, err
 	}
+	accessProgress(o, "AS-REP · поиск KDC · "+o.Domain)
 	address, err := resolveASREPKDC(ctx, o)
 	if err != nil {
 		return r, err
 	}
 	r.Host, _, _ = net.SplitHostPort(address)
 	r.Endpoint = "tcp://" + address
+	accessProgress(o, "AS-REP · KDC "+address+" · домен "+o.Domain)
 	if len(users) == 0 {
+		accessProgress(o, "AS-REP · список имён пуст; собираю имена через LDAP")
 		ldapOptions := o
 		ldapOptions.Host = r.Host
 		if ldapOptions.LDAPPort == 0 {
@@ -171,9 +185,13 @@ func kerberosAccess(ctx context.Context, o AccessOptions) (AccessReport, error) 
 			return r, err
 		}
 		if len(users) == 0 {
+			if e != nil {
+				return r, fmt.Errorf("имена не собраны через LDAP: %w; укажи пользователей или @файл в настройках AS-REP", e)
+			}
 			return r, fmt.Errorf("имена не собраны через LDAP; укажи список пользователей")
 		}
 	}
+	accessProgress(o, fmt.Sprintf("AS-REP · пользователей: %d · запросы без пароля и pre-auth", len(users)))
 	return runASREPAt(ctx, address, o.Domain, users, o, r)
 }
 
@@ -214,12 +232,15 @@ func runASREPAt(ctx context.Context, address, realm string, users []string, o Ac
 		}
 		if err != nil {
 			r.add("asrep/"+user, "AS-REP: "+user, "error", "info", err.Error())
+			accessProgress(o, "AS-REP · "+user+" · ошибка запроса к "+address+": "+err.Error())
 			continue
 		}
 		if state == "confirmed" {
+			accessProgress(o, "AS-REP · "+user+" · ответ без pre-auth получен")
 			hashes = append(hashes, hash)
 			r.add("asrep/"+user, "AS-REP без pre-auth: "+user, "confirmed", "high", "KDC "+address+" · "+strings.ToUpper(realm)+"\n"+hash+"\nОтвет получен без пароля; ключ сессии не расшифрован, вход по билету не выполнен.")
 		} else {
+			accessProgress(o, "AS-REP · "+user+" · "+hash)
 			r.add("asrep/"+user, "AS-REP: "+user, state, "info", hash)
 		}
 	}
@@ -314,7 +335,10 @@ func asrepHash(rep messages.ASRep) (string, error) {
 
 // TCP record lengths are bounded before allocation. Parent cancellation closes
 // the connection, including while waiting for a partial four-byte record header.
-func kerberosTCP(ctx context.Context, address string, request []byte) ([]byte, error) {
+func kerberosTCP(ctx context.Context, address string, request []byte) (reply []byte, err error) {
+	started := time.Now()
+	stage := "KDC TCP connect " + address
+	defer func() { err = accessFailure(stage, started, err) }()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, err
@@ -328,10 +352,12 @@ func kerberosTCP(ctx context.Context, address string, request []byte) ([]byte, e
 	frame := make([]byte, 4+len(request))
 	binary.BigEndian.PutUint32(frame, uint32(len(request)))
 	copy(frame[4:], request)
+	stage = "KDC TCP send request " + address
 	if _, err = io.Copy(conn, bytes.NewReader(frame)); err != nil {
 		return nil, err
 	}
 	var header [4]byte
+	stage = "KDC TCP read record length " + address
 	if _, err = io.ReadFull(conn, header[:]); err != nil {
 		return nil, err
 	}
@@ -339,7 +365,8 @@ func kerberosTCP(ctx context.Context, address string, request []byte) ([]byte, e
 	if n == 0 || n > 1<<20 {
 		return nil, fmt.Errorf("некорректная длина KDC-ответа: %d", n)
 	}
-	reply := make([]byte, int(n))
+	stage = fmt.Sprintf("KDC TCP read response %s expected_bytes=%d", address, n)
+	reply = make([]byte, int(n))
 	_, err = io.ReadFull(conn, reply)
 	return reply, err
 }

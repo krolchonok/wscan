@@ -168,11 +168,30 @@ func (m model) updateADControllerPicker(key string) (tea.Model, tea.Cmd) {
 
 func (m model) viewADControllerPicker(w int) string {
 	hosts := m.adControllerHosts()
-	rows := []string{"Автоопределение контроллера"}
+	rows := []string{"Автоопределение контроллера (через LDAP RootDSE)"}
 	names := map[string]string{}
+	domains := map[string]string{}
+	dcs := map[string]bool{}
 	for _, host := range m.projectADInventory().Hosts {
 		if host.HostName != "" {
 			names[host.Address] = host.HostName
+		}
+		if host.Domain != "" {
+			domains[host.Address] = host.Domain
+		}
+		if host.DCConfirmed {
+			dcs[host.Address] = true
+		}
+	}
+	for _, node := range m.adAccessNodes {
+		if node.HostName != "" && names[node.Address] == "" {
+			names[node.Address] = node.HostName
+		}
+		if node.Domain != "" && domains[node.Address] == "" {
+			domains[node.Address] = node.Domain
+		}
+		if node.DCConfirmed {
+			dcs[node.Address] = true
 		}
 	}
 	for _, host := range hosts {
@@ -184,14 +203,182 @@ func (m model) viewADControllerPicker(w int) string {
 		if name != "" && name != host {
 			label += " · " + name
 		}
+		if dcs[host] {
+			label += " · [DC]"
+		}
+		if d := domains[host]; d != "" {
+			label += " (домен: " + d + ")"
+		}
 		if host == m.adAccessManualHost {
 			label += " · DC (вручную)"
+		}
+		if host == m.adAccessHost && m.adAccessHost != "" {
+			label += " [выбран]"
 		}
 		rows = append(rows, label)
 	}
 	rows = append(rows, "Ввести IP/DNS вручную…", "Назад")
 	body := headingStyle.Render("Контроллер домена") + "\n\n"
 	index := min(m.adControllerIndex, len(rows)-1)
+	lo, hi := windowRange(index, len(rows), max(1, m.bodyHeight()-5))
+	body += moreLine(lo, true)
+	for i := lo; i < hi; i++ {
+		body += renderListRow(rows[i], i == index, w-4)
+	}
+	body += moreLine(len(rows)-hi, false)
+	return m.renderPanel(w, body)
+}
+
+func (m *model) openADDomainPicker() {
+	m.adDomainReturn, m.screen = m.screen, "ad-domain-picker"
+	m.adDomainIndex = 0
+	for i, domain := range m.adDomainList() {
+		if strings.EqualFold(domain, m.adAccessDomain) {
+			m.adDomainIndex = i + 1
+			break
+		}
+	}
+}
+
+func (m model) adDomainList() []string {
+	var domains []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+		if d != "" && !seen[d] {
+			seen[d] = true
+			domains = append(domains, d)
+		}
+	}
+	for _, host := range m.projectADInventory().Hosts {
+		add(host.Domain)
+	}
+	for _, host := range m.adAccessNodes {
+		add(host.Domain)
+	}
+	for _, d := range m.adScanDNS.Domains {
+		add(d)
+	}
+	if m.adAccessDomain != "" {
+		add(m.adAccessDomain)
+	}
+	sort.Strings(domains)
+	return domains
+}
+
+func (m *model) setADDomain(domain string) error {
+	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if domain == "" {
+		return fmt.Errorf("домен не может быть пустым")
+	}
+	m.adAccessDomain = domain
+	if m.current.ID != 0 {
+		if err := m.store.SetADController(m.ctx, m.current.ID, m.adAccessManualHost, domain); err != nil {
+			return err
+		}
+	}
+	m.message = "Домен выбран: " + domain
+	if m.adAccessManualHost == "" {
+		for _, host := range m.projectADInventory().Hosts {
+			if strings.EqualFold(host.Domain, domain) && adIdentityLDAPPort(host) != 0 {
+				m.adAccessHost = host.Address
+				m.adAccessAutoHost = host.Address
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func (m model) updateADDomainPicker(key string) (tea.Model, tea.Cmd) {
+	domains := m.adDomainList()
+	last := len(domains) + 2
+	m.adDomainIndex = min(m.adDomainIndex, last)
+	switch key {
+	case "up":
+		m.adDomainIndex = max(0, m.adDomainIndex-1)
+	case "down":
+		m.adDomainIndex = min(last, m.adDomainIndex+1)
+	case "home":
+		m.adDomainIndex = 0
+	case "end":
+		m.adDomainIndex = last
+	case "pgup":
+		m.adDomainIndex = max(0, m.adDomainIndex-max(1, m.bodyHeight()-5))
+	case "pgdown":
+		m.adDomainIndex = min(last, m.adDomainIndex+max(1, m.bodyHeight()-5))
+	case "left", "esc":
+		m.screen = m.adDomainReturn
+	case "enter":
+		if m.adDomainIndex == last {
+			m.screen = m.adDomainReturn
+			return m, nil
+		}
+		if m.adDomainIndex == len(domains)+1 {
+			m.screen = m.adDomainReturn
+			m.startInput("ad-access-domain")
+			m.input = m.adAccessDomain
+			return m, nil
+		}
+		if m.adDomainIndex == 0 {
+			m.adAccessDomain = ""
+			m.adAccessHint = ""
+			m.screen = m.adDomainReturn
+			m.message = "Домен: автоопределение"
+			return m, m.detectADAccessIdentityCmd()
+		}
+		domain := domains[m.adDomainIndex-1]
+		if err := m.setADDomain(domain); err != nil {
+			m.message = err.Error()
+			return m, nil
+		}
+		m.screen = m.adDomainReturn
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) viewADDomainPicker(w int) string {
+	domains := m.adDomainList()
+	rows := []string{"Автоопределение домена (через RootDSE / инвентарь)"}
+	domainHosts := map[string][]string{}
+	for _, host := range m.projectADInventory().Hosts {
+		d := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host.Domain)), ".")
+		if d != "" {
+			domainHosts[d] = append(domainHosts[d], host.Address)
+		}
+	}
+	for _, host := range m.adAccessNodes {
+		d := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host.Domain)), ".")
+		if d != "" {
+			found := false
+			for _, existing := range domainHosts[d] {
+				if existing == host.Address {
+					found = true
+					break
+				}
+			}
+			if !found {
+				domainHosts[d] = append(domainHosts[d], host.Address)
+			}
+		}
+	}
+	for _, domain := range domains {
+		label := domain
+		hosts := domainHosts[domain]
+		if len(hosts) > 0 {
+			label += " · обнаружен на: " + strings.Join(hosts, ", ")
+		} else {
+			label += " · (вручную)"
+		}
+		if strings.EqualFold(domain, m.adAccessDomain) && m.adAccessDomain != "" {
+			label += " [выбран]"
+		}
+		rows = append(rows, label)
+	}
+	rows = append(rows, "Ввести домен вручную…", "Назад")
+	body := headingStyle.Render("Домен Active Directory") + "\n\n"
+	index := min(m.adDomainIndex, len(rows)-1)
 	lo, hi := windowRange(index, len(rows), max(1, m.bodyHeight()-5))
 	body += moreLine(lo, true)
 	for i := lo; i < hi; i++ {

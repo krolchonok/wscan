@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"wscan/internal/app"
 )
 
@@ -45,6 +46,9 @@ func (m *model) syncSharedJobs() {
 			j.checkErrors = append([]string{}, snapshot.CheckErrors...)
 		}
 		j.options = append([]string(nil), snapshot.Options...)
+		j.environment = append([]string(nil), snapshot.Environment...)
+		j.failureStage = snapshot.FailureStage
+		j.journalDropped = snapshot.JournalDropped
 		j.checks = append([]string(nil), snapshot.Checks...)
 		if snapshot.Status == "running" || snapshot.Status == "cancelling" {
 			m.applyJobEvent(jobEvent{id: j.id, stage: snapshot.Stage, completed: snapshot.Completed, total: snapshot.Total, hasProgress: true})
@@ -85,6 +89,19 @@ func (m *model) syncSharedJobs() {
 		j.journal = nil
 		for _, ev := range snapshot.Journal {
 			j.journal = append(j.journal, ev.Time.Format("15:04:05")+"  "+ev.Message)
+		}
+		// Older snapshots only recorded the terminal stage, hiding the cause.
+		if j.errText != "" {
+			found := false
+			for _, line := range j.journal {
+				if strings.Contains(line, j.errText) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				j.journal = append(j.journal, j.ended.Format("15:04:05")+"  Причина остановки: "+j.errText)
+			}
 		}
 		if snapshot.PersistenceError != "" {
 			j.addLog("Ошибка сохранения задачи: " + snapshot.PersistenceError)

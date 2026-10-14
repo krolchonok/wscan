@@ -61,6 +61,7 @@ func screenTitle(screen string) string {
 	titles := map[string]string{
 		"port-browser":         "Порты проекта",
 		"ad-controller-picker": "Контроллер домена",
+		"ad-domain-picker":     "Домен Active Directory",
 		"checks-menu":          "Проверки", "ad-menu": "AD", "recon": "Разведка", "overview": "Обзор", "guided-scan": "Начать проверку", "projects": "Проекты", "desk": "Хосты", "networks": "Подсети", "jobs": "Задачи", "job-details": "Итог задачи", "history": "История запусков", "project-results": "Результаты", "finding-details": "Результаты",
 		"interaction-menu": "Взаимодействие", "interaction-targets": "Выбор машины", "smb-setup": "Вход SMB", "smb-browser": "SMB-проводник", "ftp-setup": "Вход FTP", "ftp-browser": "FTP-проводник", "winrm-setup": "Вход WinRM", "winrm-browser": "WinRM-проводник", "winrm-shell": "Консоль WinRM",
 		"pg-setup": "Вход PostgreSQL", "pg-console": "PostgreSQL", "mysql-setup": "Вход MySQL", "mysql-console": "MySQL", "mssql-setup": "Вход MSSQL", "mssql-console": "MSSQL", "mssql-actions": "Действия MSSQL", "mssql-xp-confirm": "Подтверждение команды MSSQL",

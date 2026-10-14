@@ -32,6 +32,7 @@ var version = "dev"
 var supportedFeatures string
 
 func main() {
+	app.BuildVersion = version
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--help", "-h", "help":

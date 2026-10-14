@@ -197,6 +197,10 @@ func (s *Service) StartScan(ctx context.Context, r ScanRequest, source, key stri
 		return Job{}, fmt.Errorf("нет известных сервисов: сначала запустите Поиск портов и сервисов")
 	}
 	req := JobRequest{ProjectID: p.ID, Kind: r.Spec.Kind, Label: r.Spec.Label, Targets: append([]string(nil), r.Spec.Hosts...), Scope: strings.Join(r.Spec.Hosts, ", "), Source: source, Checks: r.Spec.TemplateIDs}
+	req.Options = []string{fmt.Sprintf("HTTP RPS=%d concurrency=%d timeout=%ds retries=%d", p.RPS, p.Concurrency, p.TimeoutSeconds, p.Retries), fmt.Sprintf("Discovery RPS=%d concurrency=%d all_ports=%t", p.DiscoveryRPS, p.DiscoveryConcurrency, p.AllPorts), fmt.Sprintf("Active checks=%t credential attacks=%t", p.AllowExploit, p.AllowCredentialAttack)}
+	if r.Spec.Kind == "ad-scan" {
+		req.Options = append(req.Options, "Configured DNS servers: "+strings.Join(r.DNS.Servers, ", "), "Configured DNS domains: "+strings.Join(r.DNS.Domains, ", "), fmt.Sprintf("DNS SRV query_limit=%d (0=default)", r.DNS.MaxQueries))
+	}
 	if key != "" {
 		raw, _ := json.Marshal(r)
 		req.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(raw))

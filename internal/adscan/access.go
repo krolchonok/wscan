@@ -116,7 +116,7 @@ func validateAccess(o *AccessOptions) error {
 func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	r := AccessReport{Host: o.Host, Mode: o.Mode}
 	if o.Mode == "dns" {
-		return AuditDNS(ctx, o.Host, o.Domain, o.DNSPort, o.Timeout)
+		return auditDNS(ctx, o.Host, o.Domain, o.DNSPort, o.Timeout, o.Progress)
 	}
 	if o.Mode == "windows" {
 		return windowsAccess(ctx, o)
@@ -124,10 +124,24 @@ func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	if o.Mode == "asrep" {
 		return kerberosAccess(ctx, o)
 	}
+	if o.Mode == "ldap-anonymous" {
+		o.Credential = domain.Credential{}
+		if o.Domain == "" {
+			o.Domain = "anonymous.invalid" // RootDSE does not need a naming context.
+		}
+	}
 	if err := validateAccess(&o); err != nil {
 		return r, err
 	}
 	switch o.Mode {
+	case "ldap-anonymous":
+		accessProgress(o, fmt.Sprintf("LDAP RootDSE · %s:%d · без учётки", o.Host, o.LDAPPort))
+		host, err := DiscoverLDAPIdentity(ctx, o.Host, o.LDAPPort)
+		if err != nil {
+			return r, err
+		}
+		r.add("rootdse", "LDAP RootDSE", "observed", "info", fmt.Sprintf("%s; домен: %s; контроллер: %s; AD DS подтверждён", host.LDAPMessage, host.Domain, host.HostName))
+		return r, nil
 	case "directory":
 		return directoryAccess(ctx, o)
 	case "passpolicy":
@@ -142,7 +156,7 @@ func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 		return ldapSecurity(ctx, o)
 	case "user-enum", "pre2k":
 		return r, fmt.Errorf("этот Kerberos-режим отключён; смотри read-only кандидаты в LDAP-аудите")
-	case "sysvol":
+	case "sysvol", "sysvol-auth":
 		return sysvolAccess(ctx, o)
 	case "coercion":
 		return r, fmt.Errorf("для Coerce используй RunCoercion с адресом локального приёмника и списком машин")
@@ -151,16 +165,34 @@ func RunAccess(ctx context.Context, o AccessOptions) (AccessReport, error) {
 	}
 }
 
+func accessProgress(o AccessOptions, message string) {
+	if o.Progress != nil {
+		o.Progress(message)
+	}
+}
+
+func ldapAccessError(endpoint, step string, port int, err error) error {
+	hint := ""
+	if port == 636 && ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
+		hint = "; проверь настройку LDAPS и сертификат сервера; порт 389 можно выбрать вручную (l)"
+	}
+	return fmt.Errorf("%s · %s: %w%s", endpoint, step, err, hint)
+}
+
 func accessLDAP(ctx context.Context, o AccessOptions, port int, bind bool) (*ldap.Conn, func(), error) {
+	started := time.Now()
 	scheme := "ldap"
 	if port == 636 {
 		scheme = "ldaps"
 	}
-	c, e := ldap.DialURL(scheme+"://"+net.JoinHostPort(o.Host, strconv.Itoa(port)), ldap.DialWithDialer(&net.Dialer{Timeout: 4 * time.Second}),
+	endpoint := scheme + "://" + net.JoinHostPort(o.Host, strconv.Itoa(port))
+	accessProgress(o, "LDAP · соединение с "+endpoint+" · connect_timeout=4s request_timeout=8s TLS_min=1.2 (LDAPS), certificate_verify=false (LDAPS)")
+	c, e := ldap.DialURL(endpoint, ldap.DialWithDialer(&net.Dialer{Timeout: 4 * time.Second}),
 		ldap.DialWithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})) // Same private-PKI policy as the existing LDAP client.
 	if e != nil {
-		return nil, nil, e
+		return nil, nil, ldapAccessError(endpoint, "соединение", port, accessFailure("LDAP dial/TLS", started, e))
 	}
+	accessProgress(o, fmt.Sprintf("LDAP · соединение установлено · %s · elapsed=%s", endpoint, time.Since(started).Round(time.Millisecond)))
 	c.SetTimeout(8 * time.Second)
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	closeFn := func() { stop(); c.Close() }
@@ -175,6 +207,8 @@ func accessLDAP(ctx context.Context, o AccessOptions, port int, bind bool) (*lda
 			realm = o.Domain
 		}
 		// One authentication mechanism, no fallback password attempts or anonymous bind.
+		started = time.Now()
+		accessProgress(o, "LDAP · NTLM bind с выбранной учёткой · "+endpoint+" · realm="+realm+" credential_type="+cred.Type)
 		if cred.Type == "ntlm-hash" {
 			e = c.NTLMBindWithHash(realm, cred.Username, cred.Secret)
 		} else {
@@ -182,8 +216,9 @@ func accessLDAP(ctx context.Context, o AccessOptions, port int, bind bool) (*lda
 		}
 		if e != nil {
 			closeFn()
-			return nil, nil, e
+			return nil, nil, ldapAccessError(endpoint, "NTLM bind", port, accessFailure("LDAP bind", started, e))
 		}
+		accessProgress(o, fmt.Sprintf("LDAP · bind принят · %s · elapsed=%s", endpoint, time.Since(started).Round(time.Millisecond)))
 	}
 	return c, closeFn, nil
 }
@@ -265,7 +300,10 @@ func directoryAccess(ctx context.Context, o AccessOptions) (AccessReport, error)
 		{"gmsa", "gMSA: читаемый managed password", base, "(objectClass=msDS-GroupManagedServiceAccount)", []string{"sAMAccountName", "msDS-ManagedPassword", "msDS-GroupMSAMembership"}},
 	}
 	for _, q := range queries {
+		started := time.Now()
+		accessProgress(o, fmt.Sprintf("LDAP · %s:%d · %s · base=%s filter=%s limit=%d", o.Host, o.LDAPPort, q.name, q.base, q.filter, o.MaxObjects))
 		entries, err := accessSearch(ctx, c, q.base, q.filter, q.attrs, o.MaxObjects)
+		err = accessFailure("LDAP search "+q.id, started, err)
 		state := "observed"
 		detail := fmt.Sprintf("LDAP вернул %d объектов", len(entries))
 		if err != nil {
@@ -276,6 +314,7 @@ func directoryAccess(ctx context.Context, o AccessOptions) (AccessReport, error)
 			detail += "; " + err.Error()
 		}
 		r.add(q.id, q.name, state, "info", detail)
+		accessProgress(o, fmt.Sprintf("LDAP · %s · state=%s objects=%d elapsed=%s", q.name, state, len(entries), time.Since(started).Round(time.Millisecond)))
 		for _, entry := range entries {
 			if q.id == "policy" {
 				addPasswordPolicy(&r, entry)

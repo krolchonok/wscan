@@ -186,6 +186,8 @@ type model struct {
 	adAccessManualHost                               string
 	adControllerReturn                               string
 	adControllerIndex                                int
+	adDomainReturn                                   string
+	adDomainIndex                                    int
 	adAccessNodes                                    []adscan.Host
 	adAccessNodesProject                             int64
 	adCoerceCallback                                 string

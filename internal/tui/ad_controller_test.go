@@ -105,3 +105,59 @@ func TestControllerPickerListsIndividualMachinesInNumericOrder(t *testing.T) {
 		t.Fatal("selected PC is hidden below viewport")
 	}
 }
+
+func TestADDomainPickerShowsDiscoveredAndManualDomains(t *testing.T) {
+	m := newTestModelForSettings(t)
+	m.inventory = map[string]*hostInfo{
+		"192.0.2.10": adIdentityHostInfo(t, adscan.Host{Address: "192.0.2.10", Domain: "lab.example", DCConfirmed: true, Ports: []int{389}}),
+		"192.0.2.20": adIdentityHostInfo(t, adscan.Host{Address: "192.0.2.20", Domain: "corp.example", DCConfirmed: true, Ports: []int{389}}),
+	}
+	m.hostOrder = []string{"192.0.2.10", "192.0.2.20"}
+	m.openADAccess()
+
+	// Press d to open domain picker
+	next, _ := m.updateADAccess("d")
+	m = next.(model)
+	if m.screen != "ad-domain-picker" {
+		t.Fatalf("expected ad-domain-picker screen, got %s", m.screen)
+	}
+
+	view := ansi.Strip(m.viewADDomainPicker(100))
+	if !strings.Contains(view, "Автоопределение домена") {
+		t.Fatal("missing auto-detection option")
+	}
+	if !strings.Contains(view, "lab.example") || !strings.Contains(view, "192.0.2.10") {
+		t.Fatal("missing lab.example or its host")
+	}
+	if !strings.Contains(view, "corp.example") || !strings.Contains(view, "192.0.2.20") {
+		t.Fatal("missing corp.example or its host")
+	}
+	if !strings.Contains(view, "Ввести домен вручную…") {
+		t.Fatal("missing manual input option")
+	}
+
+	// Select corp.example
+	domains := m.adDomainList()
+	for i, d := range domains {
+		if d == "corp.example" {
+			m.adDomainIndex = i + 1
+		}
+	}
+	next, _ = m.Update(enterKey())
+	m = next.(model)
+	if m.screen != "ad-access" || m.adAccessDomain != "corp.example" {
+		t.Fatalf("domain not selected: %s, domain=%s", m.screen, m.adAccessDomain)
+	}
+	if m.adAccessHost != "192.0.2.20" {
+		t.Fatalf("controller for corp.example not auto-selected: got %s", m.adAccessHost)
+	}
+
+	// Test manual domain input option
+	m.openADDomainPicker()
+	m.adDomainIndex = len(domains) + 1
+	next, _ = m.Update(enterKey())
+	m = next.(model)
+	if m.screen != "input" || m.inputAction != "ad-access-domain" {
+		t.Fatalf("manual option did not open input: screen=%s action=%s", m.screen, m.inputAction)
+	}
+}

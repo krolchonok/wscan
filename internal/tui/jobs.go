@@ -57,6 +57,7 @@ type job struct {
 	adResult       *adscan.Result
 	findings       int
 	errText        string
+	failureStage   string
 	checkErrors    []string
 	started        time.Time
 	ended          time.Time
@@ -67,6 +68,8 @@ type job struct {
 	checks         []string
 	options        []string
 	journal        []string
+	journalDropped int
+	environment    []string
 	logPath        string
 	logError       string
 	lastLog        time.Time
@@ -74,10 +77,12 @@ type job struct {
 
 func (j *job) addLog(message string) {
 	now := time.Now()
-	line := now.Format("15:04:05") + "  " + message
+	line := now.Format("15:04:05.000") + "  " + message
 	j.journal = append(j.journal, line)
-	if len(j.journal) > 500 {
-		j.journal = j.journal[len(j.journal)-500:]
+	if len(j.journal) > 10000 {
+		dropped := len(j.journal) - 10000
+		j.journalDropped += dropped
+		j.journal = j.journal[dropped:]
 	}
 	j.lastLog = now
 	if j.logPath == "" {
@@ -97,6 +102,9 @@ func (j *job) addLog(message string) {
 }
 
 func (m model) initJobLog(j *job) {
+	if len(j.environment) == 0 {
+		j.environment = app.CaptureDiagnostics()
+	}
 	if m.shared != nil {
 		m.shared.Jobs.Metadata(j.id, j.scope, j.checks, j.options)
 	}
@@ -124,7 +132,7 @@ func (j *job) active() bool { return j.status == statusRunning }
 
 func (j *job) progressText(width int) string {
 	if j.total <= 0 && j.status != statusDone {
-		return "… " + j.statusLabel()
+		return "…"
 	}
 	percent := 100
 	if j.total > 0 {
@@ -311,6 +319,7 @@ func (m *model) applyJobEvent(ev jobEvent) {
 		j.addLog("Ошибка проверки: " + message)
 	}
 	if ev.err != nil {
+		j.failureStage = j.stage
 		j.errText = ev.err.Error()
 		if ctxCancelled(ev.err) {
 			j.status = statusCancelled

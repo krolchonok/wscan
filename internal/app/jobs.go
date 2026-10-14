@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -47,11 +48,14 @@ type Job struct {
 	RunID            int64      `json:"run_id"`
 	Findings         int        `json:"findings"`
 	Error            string     `json:"error,omitempty"`
+	FailureStage     string     `json:"failure_stage,omitempty"`
 	CheckErrors      []string   `json:"check_errors"`
 	PersistenceError string     `json:"persistence_error,omitempty"`
 	Started          time.Time  `json:"started"`
 	Ended            time.Time  `json:"ended,omitempty"`
 	Journal          []JobEvent `json:"journal"`
+	JournalDropped   int        `json:"journal_dropped,omitempty"`
+	Environment      []string   `json:"environment,omitempty"`
 	Outcome          *Outcome   `json:"-"`
 }
 type jobState struct {
@@ -139,7 +143,7 @@ func (m *Manager) Start(req JobRequest, key string, execute Executor) (Job, erro
 	}
 	m.next++
 	ctx, cancel := context.WithCancel(m.ctx)
-	state := &jobState{job: Job{ID: m.next, Key: key, JobRequest: cloneRequest(req), Status: "running", Stage: "Подготовка", Started: time.Now()}, cancel: cancel}
+	state := &jobState{job: Job{ID: m.next, Key: key, JobRequest: cloneRequest(req), Status: "running", Stage: "Подготовка", Started: time.Now(), Environment: CaptureDiagnostics()}, cancel: cancel}
 	m.jobs[state.job.ID] = state
 	m.eventLocked(state, "Запуск: "+req.Label)
 	if err := m.saveLocked(state); err != nil {
@@ -163,6 +167,7 @@ func cloneRequest(r JobRequest) JobRequest {
 func cloneJob(j Job) Job {
 	j.JobRequest = cloneRequest(j.JobRequest)
 	j.Journal = append([]JobEvent(nil), j.Journal...)
+	j.Environment = append([]string(nil), j.Environment...)
 	if j.CheckErrors != nil {
 		j.CheckErrors = append([]string{}, j.CheckErrors...)
 	}
@@ -172,8 +177,10 @@ func (m *Manager) eventLocked(s *jobState, msg string) {
 	m.revision++
 	s.job.Revision = m.revision
 	s.job.Journal = append(s.job.Journal, JobEvent{Sequence: m.revision, Time: time.Now(), Message: msg})
-	if len(s.job.Journal) > 500 {
-		s.job.Journal = s.job.Journal[len(s.job.Journal)-500:]
+	if len(s.job.Journal) > 10000 {
+		dropped := len(s.job.Journal) - 10000
+		s.job.JournalDropped += dropped
+		s.job.Journal = s.job.Journal[dropped:]
 	}
 }
 func (m *Manager) saveLocked(s *jobState) error {
@@ -201,8 +208,8 @@ func (m *Manager) run(ctx context.Context, id int, execute Executor) {
 	var err error
 	func() {
 		defer func() {
-			if recover() != nil {
-				err = fmt.Errorf("исполнитель завершился аварийно")
+			if recovered := recover(); recovered != nil {
+				err = fmt.Errorf("исполнитель завершился аварийно; panic_type=%T\n%s", recovered, debug.Stack())
 			}
 		}()
 		outcome, err = execute(ctx, func(stage string, counts ...int) {
@@ -249,6 +256,9 @@ func (m *Manager) run(ctx context.Context, id int, execute Executor) {
 	if outcome.ProjectID != 0 {
 		s.job.ProjectID = outcome.ProjectID
 	}
+	if err != nil || executionCancelled != nil || wasCancelling {
+		s.job.FailureStage = s.job.Stage
+	}
 	s.job.Status = "done"
 	s.job.Stage = "Готово"
 	if err == nil && executionCancelled != nil {
@@ -265,6 +275,15 @@ func (m *Manager) run(ctx context.Context, id int, execute Executor) {
 		s.job.Error = err.Error()
 	} else if len(outcome.Result.Errors) > 0 {
 		s.job.Stage = "Готово с ограничениями"
+	}
+	for _, message := range outcome.Result.Skipped {
+		m.eventLocked(s, "Пропущено: "+message)
+	}
+	for _, message := range s.job.CheckErrors {
+		m.eventLocked(s, "Ошибка проверки: "+message)
+	}
+	if s.job.Error != "" {
+		m.eventLocked(s, "Причина остановки: "+s.job.Error)
 	}
 	m.eventLocked(s, s.job.Stage)
 	_ = m.saveLocked(s)

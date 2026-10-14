@@ -95,6 +95,29 @@ func asrepKDC(t *testing.T, handler func(messages.ASReq) ([]byte, error)) (strin
 	return l.Addr().String(), count
 }
 
+func TestASREPProgressExplainsPreauthAndRequestErrors(t *testing.T) {
+	for _, code := range []int32{errorcode.KDC_ERR_PREAUTH_REQUIRED, errorcode.KDC_ERR_POLICY} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			address, _ := asrepKDC(t, func(req messages.ASReq) ([]byte, error) {
+				reply := messages.NewKRBError(req.ReqBody.SName, req.ReqBody.Realm, code, "")
+				return reply.Marshal()
+			})
+			var journal []string
+			report, err := runASREPAt(context.Background(), address, "lab.example", []string{"alice"}, AccessOptions{Timeout: time.Second, Progress: func(s string) { journal = append(journal, s) }}, AccessReport{})
+			if err != nil || len(report.Checks) != 1 {
+				t.Fatalf("%+v %v", report, err)
+			}
+			want := "KDC требует pre-auth"
+			if code == errorcode.KDC_ERR_POLICY {
+				want = "ошибка запроса к " + address
+			}
+			if !strings.Contains(strings.Join(journal, "\n"), want) {
+				t.Fatalf("KDC outcome hidden: %v", journal)
+			}
+		})
+	}
+}
+
 func TestASREPKDCOutcomesAndNoPassword(t *testing.T) {
 	for _, tc := range []struct {
 		code  int32
