@@ -37,6 +37,18 @@ func TestOutputIsErrorIgnoresNegotiateNoise(t *testing.T) {
 	}
 }
 
+func TestOutputIsErrorRecognizesTransportReset(t *testing.T) {
+	for _, output := range []string{
+		"SAMR failed to receive bytes: read tcp 10.0.0.2:40000->10.0.0.10:445: connection reset by peer",
+		"SAMR failed to recive bytes: read tcp: connection reset by peer",
+		"failed to read bytes: connection reset by peer",
+	} {
+		if !OutputIsError(output) {
+			t.Fatalf("transport failure classified as a result: %q", output)
+		}
+	}
+}
+
 func TestSMTPConnectionFailuresAreErrors(t *testing.T) {
 	for _, output := range []string{
 		"Couldn't establish connection on port 25",

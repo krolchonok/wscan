@@ -47,6 +47,10 @@ func OutputIsError(output string) bool {
 	return strings.HasPrefix(s, "error:") ||
 		strings.HasPrefix(s, "error ") ||
 		strings.HasPrefix(s, "script execution failed") ||
+		strings.Contains(s, "connection reset by peer") ||
+		strings.Contains(s, "failed to receive bytes") ||
+		strings.Contains(s, "failed to recive bytes") ||
+		strings.Contains(s, "failed to read bytes") ||
 		strings.HasPrefix(s, "couldn't establish connection on port ") ||
 		strings.HasPrefix(s, "could not establish connection on port ") ||
 		strings.HasPrefix(s, "smtp failed to send ") ||
