@@ -68,8 +68,13 @@ type Host struct {
 
 // ADCSPath identifies a certificate enrollment endpoint.
 type ADCSPath struct {
-	Port int
-	Path string
+	Port     int
+	Scheme   string
+	Path     string
+	Kind     string
+	Auth     []string
+	State    string
+	Evidence string
 }
 
 // Result is the completed subnet discovery summary.
@@ -348,9 +353,17 @@ func probeADCS(ctx context.Context, address string, port int) []ADCSPath {
 	}
 	client := &http.Client{Timeout: 1500 * time.Millisecond, Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	defer transport.CloseIdleConnections()
-	paths := []string{"/certsrv/", "/CES/", "/ADPolicyProvider_CEP_Kerberos/service.svc"}
+	paths := []struct{ path, kind string }{
+		{"/certsrv/", "web-enrollment"},
+		{"/CertSrv/mscep/", "ndes"},
+		{"/CertSrv/mscep_admin/", "ndes-admin"},
+		{"/CES/", "enrollment-web-service"},
+		{"/ADPolicyProvider_CEP_Kerberos/service.svc", "enrollment-policy"},
+		{"/ADPolicyProvider_CEP_UsernamePassword/service.svc", "enrollment-policy"},
+	}
 	found := make([]ADCSPath, 0, len(paths))
-	for _, path := range paths {
+	for _, candidate := range paths {
+		path := candidate.path
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(address, fmt.Sprint(port)), path), nil)
 		if err != nil {
 			continue
@@ -361,15 +374,61 @@ func probeADCS(ctx context.Context, address string, port int) []ADCSPath {
 		}
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
 		_ = response.Body.Close()
-		statusSuggestsEndpoint := response.StatusCode == http.StatusOK || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden
+		statusSuggestsEndpoint := response.StatusCode == http.StatusOK || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusMovedPermanently || response.StatusCode == http.StatusFound || response.StatusCode == http.StatusTemporaryRedirect || response.StatusCode == http.StatusPermanentRedirect
 		content := strings.ToLower(string(body))
 		signature := strings.Contains(content, "certificate services") || strings.Contains(content, "certification authority") || strings.Contains(content, "enrollment policy") || strings.Contains(content, "enrollment web service") || strings.Contains(content, "certsrv")
 		iisProtectedEndpoint := statusSuggestsEndpoint && (response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) && strings.Contains(strings.ToLower(response.Header.Get("Server")), "iis")
-		if statusSuggestsEndpoint && (signature || iisProtectedEndpoint) {
-			found = append(found, ADCSPath{Port: port, Path: path})
+		location := response.Header.Get("Location")
+		redirectSignature := location != "" && strings.Contains(strings.ToLower(location), strings.ToLower(strings.TrimSuffix(path, "/")))
+		if statusSuggestsEndpoint && (signature || iisProtectedEndpoint || redirectSignature) {
+			auth := advertisedHTTPAuth(response.Header.Values("WWW-Authenticate"))
+			state := "observed"
+			evidence := fmt.Sprintf("%s %s returned HTTP %d", strings.ToUpper(scheme), path, response.StatusCode)
+			if len(auth) > 0 {
+				evidence += "; authentication: " + strings.Join(auth, ", ")
+			}
+			if location != "" {
+				evidence += "; redirect: " + location
+			}
+			// ESC8 is only a candidate here: HTTP plus advertised integrated
+			// Windows authentication makes relay plausible, but EPA and the
+			// effective enrollment rights require authenticated validation.
+			if candidate.kind == "web-enrollment" && scheme == "http" && containsFold(auth, "NTLM", "Negotiate") {
+				state = "candidate"
+				evidence += "; ESC8 candidate: Web Enrollment accepts integrated authentication without transport TLS; EPA/enrollment rights are not confirmed"
+			}
+			found = append(found, ADCSPath{Port: port, Scheme: scheme, Path: path, Kind: candidate.kind, Auth: auth, State: state, Evidence: evidence})
 		}
 	}
 	return found
+}
+
+func advertisedHTTPAuth(values []string) []string {
+	var out []string
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			fields := strings.Fields(strings.TrimSpace(item))
+			if len(fields) == 0 {
+				continue
+			}
+			name := fields[0]
+			if name != "" && containsFold([]string{"Negotiate", "NTLM", "Basic", "Digest", "Bearer"}, name) && !containsFold(out, name) {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+func containsFold(values []string, candidates ...string) bool {
+	for _, value := range values {
+		for _, candidate := range candidates {
+			if strings.EqualFold(value, candidate) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // EstimateDuration returns the nominal duration at the scanner's fixed probe

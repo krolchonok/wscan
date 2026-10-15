@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +133,11 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 			if role == "AD CS" {
 				var endpoints []string
 				for _, endpoint := range node.ADCSPaths {
-					endpoints = append(endpoints, fmt.Sprintf("TCP/%d%s", endpoint.Port, endpoint.Path))
+					scheme := endpoint.Scheme
+					if scheme == "" {
+						scheme = map[bool]string{true: "https", false: "http"}[endpoint.Port == 443]
+					}
+					endpoints = append(endpoints, fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(node.Address, strconv.Itoa(endpoint.Port)), endpoint.Path))
 				}
 				if len(endpoints) > 0 {
 					description += " Endpoints: " + strings.Join(endpoints, ", ") + "."
@@ -142,6 +148,40 @@ func (m Worker) runADScan(ctx context.Context, cidr string, emit Reporter) (engi
 				TemplateID: "adscan-role-" + adRoleKey(role), Name: role, Severity: "info",
 				Target: cidr, MatchedAt: node.Address, Risk: "Сетевая разведка; предположения отделены от LDAP-подтверждения роли DC.", Time: time.Now().UTC(),
 			}
+			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
+				status = "failed"
+				return result, &details, projectID, projectName, err
+			}
+			result.Findings = append(result.Findings, finding)
+		}
+		for _, endpoint := range node.ADCSPaths {
+			scheme := endpoint.Scheme
+			if scheme == "" {
+				scheme = "http"
+				if endpoint.Port == 443 {
+					scheme = "https"
+				}
+			}
+			matchedAt := fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(node.Address, strconv.Itoa(endpoint.Port)), endpoint.Path)
+			name, templateID, severity, risk := "AD CS endpoint: "+endpoint.Kind, "adscan-adcs-endpoint", "info", "Endpoint обнаружен без аутентификации; возможность эксплуатации не проверялась."
+			matcher := endpoint.State
+			if matcher == "" {
+				matcher = "observed"
+			}
+			if endpoint.Kind == "web-enrollment" && matcher == "candidate" {
+				name, templateID, severity = "AD CS ESC8 candidate: Web Enrollment over HTTP", "adscan-adcs-esc8", "medium"
+				risk = "NTLM relay может быть возможен, но EPA, права enrollment и выдача сертификата не подтверждались."
+			}
+			finding := domain.Finding{TemplateID: templateID, Name: name, Severity: severity, Target: cidr, MatchedAt: matchedAt, Protocol: "http", MatcherName: matcher, Evidence: endpoint.Evidence, Risk: risk, Time: time.Now().UTC()}
+			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
+				status = "failed"
+				return result, &details, projectID, projectName, err
+			}
+			result.Findings = append(result.Findings, finding)
+		}
+		if len(node.ADCSPaths) > 0 && containsInt(node.Ports, 135) {
+			finding := adEvidenceFinding(cidr, node.Address, "adcs-esc11-incomplete", "AD CS ESC11: требуется проверка RPC enrollment", "AD CS endpoint обнаружен, TCP/135 доступен; наличие MS-ICPR и требуемый RPC authentication level не проверены анонимным этапом.", "Это не кандидат уязвимости: ESC11 подтверждается только bind к certificate enrollment RPC и проверкой packet privacy.")
+			finding.MatcherName = "incomplete"
 			if err := m.store.SaveFinding(ctx, runID, finding); err != nil {
 				status = "failed"
 				return result, &details, projectID, projectName, err
