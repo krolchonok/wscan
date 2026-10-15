@@ -100,12 +100,21 @@ func (r *Runner) Run(ctx context.Context, scriptPath string, host HostInfo, port
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, r.ScriptTimeLimit())
 	defer cancel()
+	deadline, hasDeadline := ctx.Deadline()
 	results, ran, err := r.run(ctx, scriptPath, host, ports)
 	if parent.Err() != nil {
 		return results, ran, parent.Err()
 	}
-	if ctx.Err() != nil {
-		return results, ran, fmt.Errorf("%s: общий таймаут скрипта %s: %w", filepath.Base(scriptPath), r.ScriptTimeLimit(), ctx.Err())
+	// A socket deadline and the context timer can become ready at virtually
+	// the same instant. Lua may consume the socket error and return before the
+	// context goroutine publishes ctx.Err(), so also compare the captured
+	// absolute deadline to avoid reporting a timed-out script as successful.
+	if ctx.Err() != nil || (hasDeadline && !time.Now().Before(deadline)) {
+		cause := ctx.Err()
+		if cause == nil {
+			cause = context.DeadlineExceeded
+		}
+		return results, ran, fmt.Errorf("%s: общий таймаут скрипта %s: %w", filepath.Base(scriptPath), r.ScriptTimeLimit(), cause)
 	}
 	return results, ran, err
 }

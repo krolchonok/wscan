@@ -38,8 +38,8 @@ type SQLiFormProgress struct {
 }
 type SQLiFormResult struct {
 	Forms, Params, Done, Total, Errors int
-	Hits                                []SQLiFormHit
-	Limitation                          string
+	Hits                               []SQLiFormHit
+	Limitation                         string
 }
 
 const (
@@ -121,6 +121,9 @@ func parseSQLiForms(base *url.URL, body []byte) []sqliForm {
 			}
 		}
 		if action.Scheme != "http" && action.Scheme != "https" {
+			continue
+		}
+		if !sameWebOrigin(base, action) {
 			continue
 		}
 		form := sqliForm{Action: action, Method: method, Values: map[string]string{}}

@@ -107,7 +107,7 @@ func TestASREPProgressExplainsPreauthAndRequestErrors(t *testing.T) {
 			if err != nil || len(report.Checks) != 1 {
 				t.Fatalf("%+v %v", report, err)
 			}
-			want := "KDC требует pre-auth"
+			want := "требует pre-auth"
 			if code == errorcode.KDC_ERR_POLICY {
 				want = "ошибка запроса к " + address
 			}
@@ -122,7 +122,7 @@ func TestASREPKDCOutcomesAndNoPassword(t *testing.T) {
 	for _, tc := range []struct {
 		code  int32
 		state string
-	}{{0, "confirmed"}, {errorcode.KDC_ERR_PREAUTH_REQUIRED, "negative"}, {errorcode.KDC_ERR_C_PRINCIPAL_UNKNOWN, "negative"}, {errorcode.KDC_ERR_CLIENT_REVOKED, "denied"}, {errorcode.KDC_ERR_POLICY, "error"}} {
+	}{{0, "confirmed"}, {errorcode.KDC_ERR_PREAUTH_REQUIRED, "valid"}, {errorcode.KDC_ERR_C_PRINCIPAL_UNKNOWN, "negative"}, {errorcode.KDC_ERR_CLIENT_REVOKED, "valid-disabled"}, {errorcode.KDC_ERR_POLICY, "error"}} {
 		t.Run(fmt.Sprint(tc.code), func(t *testing.T) {
 			address, count := asrepKDC(t, func(req messages.ASReq) ([]byte, error) {
 				if !reflect.DeepEqual(req.ReqBody.EType, []int32{23}) {
@@ -343,7 +343,7 @@ func TestASREPAutoDNSAndPrivateExport(t *testing.T) {
 func TestASREPReconUsesOneKDCPerRealmAndKeepsScope(t *testing.T) {
 	r := Result{Hosts: []Host{{Address: "10.0.0.10", Domain: "a.example", Ports: []int{88}, LDAPUsers: []string{"alice"}}, {Address: "10.0.0.11", Domain: "a.example", Ports: []int{88}, LDAPUsers: []string{"alice", "bob"}}, {Address: "10.0.0.12", Domain: "b.example", Ports: []int{88}, LDAPUsers: []string{"carol"}}, {Address: "10.0.0.13", Domain: "empty.example", Ports: []int{88}}}, DNSRecords: []SRVRecord{{Domain: "a.example", Target: "outside.example", Port: 88}}}
 	opts, skipped := ASREPReconOptions(r)
-	if len(opts) != 2 || len(skipped) != 1 || opts[0].Host != "10.0.0.10" || !reflect.DeepEqual(opts[0].Users, []string{"alice", "bob"}) || !reflect.DeepEqual(opts[1].Users, []string{"carol"}) {
+	if len(opts) != 3 || len(skipped) != 0 || opts[0].Host != "10.0.0.10" || !reflect.DeepEqual(opts[0].Users, []string{"administrator", "alice", "bob", "guest", "krbtgt"}) || !reflect.DeepEqual(opts[1].Users, []string{"administrator", "carol", "guest", "krbtgt"}) || !reflect.DeepEqual(opts[2].Users, []string{"administrator", "guest", "krbtgt"}) {
 		t.Fatalf("%+v %v", opts, skipped)
 	}
 }

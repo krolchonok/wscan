@@ -125,8 +125,13 @@ func (e *Engine) ScanProgress(ctx context.Context, p domain.Project, templates [
 	// whole call chain — see js.WithDiscoveredServices's doc comment.
 	ctx = js.WithDiscoveredServices(ctx, convertServicesForJS(p.Services))
 	ctx = js.WithSSHInfoCache(ctx)
-	status := "completed"
-	defer func() { _ = e.store.FinishRun(context.Background(), runID, status) }()
+	status := "failed"
+	finished := false
+	defer func() {
+		if !finished {
+			_ = e.store.FinishRun(context.Background(), runID, status)
+		}
+	}()
 	// Our own out-of-band collaborator, so interactsh templates are confirmed by
 	// a real callback instead of being skipped. If it cannot start, OOB matchers
 	// simply never fire (no false positives); the scan continues.
@@ -318,10 +323,13 @@ feed:
 	result.HTTPRequestsSaved = responseCache.hits
 	if ctx.Err() != nil {
 		status = "cancelled"
+	} else {
+		status = "completed"
 	}
 	if err := e.store.FinishRun(ctx, runID, status); err != nil {
 		return result, err
 	}
+	finished = true
 	return result, nil
 }
 

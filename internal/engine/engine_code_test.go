@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +113,23 @@ func TestCodeExecRespectsTimeout(t *testing.T) {
 	}
 	if len(res.Findings) != 0 {
 		t.Fatalf("timed-out script must not match, got %d findings", len(res.Findings))
+	}
+}
+
+func TestCodeExecDoesNotInheritScannerSecrets(t *testing.T) {
+	const secret = "wscan-secret-must-not-reach-template"
+	t.Setenv("WSCAN_TEST_SECRET", secret)
+	tmpl := codeTemplate(domain.CodeRequest{
+		Engine:   []string{"sh"},
+		Source:   `printf '%s' "${WSCAN_TEST_SECRET-unset}"`,
+		Matchers: []domain.Matcher{{Type: "word", Part: "data", Words: []string{"unset"}}},
+	})
+	e := New(&fakeStore{}, Config{RPS: 100, Concurrency: 1, TimeoutSeconds: 5})
+	res, err := e.Scan(context.Background(), domain.Project{ID: 1, Targets: []string{"example.com"}, AllowCodeExec: true}, []domain.Template{tmpl})
+	if err != nil || len(res.Findings) != 1 {
+		t.Fatalf("environment isolation failed: findings=%d errors=%v err=%v", len(res.Findings), res.Errors, err)
+	}
+	if os.Getenv("WSCAN_TEST_SECRET") != secret {
+		t.Fatal("test setup unexpectedly changed parent environment")
 	}
 }

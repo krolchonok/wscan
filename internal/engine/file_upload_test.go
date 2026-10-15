@@ -132,3 +132,20 @@ func TestFileUploadInputValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestFileUploadRejectsCrossOriginAction(t *testing.T) {
+	var attacked bool
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { attacked = true }))
+	defer other.Close()
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<form action="` + other.URL + `/upload" method="post" enctype="multipart/form-data"><input type="file" name="file"></form>`))
+	}))
+	defer page.Close()
+
+	if _, err := ScanFileUpload(context.Background(), FileUploadOptions{URL: page.URL}, nil); err == nil {
+		t.Fatal("expected cross-origin upload form to be rejected")
+	}
+	if attacked {
+		t.Fatal("cross-origin upload action received an active probe")
+	}
+}

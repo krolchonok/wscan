@@ -79,9 +79,11 @@ func execCode(ctx context.Context, t domain.Template, req domain.CodeRequest, ta
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, interp, args...)
-	// No inherited stdin/environment beyond what exec.Command already
-	// restricts to (the scanner process's own env) — the script gets
-	// exactly the rendered source and args, nothing more to key off of.
+	// Templates are untrusted input. Do not expose the scanner process's
+	// credentials, proxy settings, API tokens, or other environment variables
+	// to an external interpreter. Keep only the small set required to start
+	// common interpreters on Unix and Windows.
+	cmd.Env = codeExecEnvironment()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -117,4 +119,15 @@ func execCode(ctx context.Context, t domain.Template, req domain.CodeRequest, ta
 		Target: target, MatchedAt: "code://" + filepath.Base(interp), Evidence: evidence,
 		Risk: t.Risk, Protocol: "code", Time: time.Now().UTC(),
 	}}, errs
+}
+
+func codeExecEnvironment() []string {
+	allowed := []string{"PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"}
+	env := make([]string, 0, len(allowed))
+	for _, key := range allowed {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }

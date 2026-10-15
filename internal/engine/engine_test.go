@@ -12,9 +12,11 @@ import (
 )
 
 type fakeStore struct {
-	findings      []domain.Finding
-	services      []domain.Service
-	failureCounts map[string]int
+	findings       []domain.Finding
+	services       []domain.Service
+	failureCounts  map[string]int
+	finishStatuses []string
+	saveServiceErr error
 }
 
 func (f *fakeStore) StartRun(context.Context, int64) (int64, error) { return 1, nil }
@@ -22,8 +24,14 @@ func (f *fakeStore) SaveFinding(_ context.Context, _ int64, x domain.Finding) er
 	f.findings = append(f.findings, x)
 	return nil
 }
-func (f *fakeStore) FinishRun(context.Context, int64, string) error { return nil }
+func (f *fakeStore) FinishRun(_ context.Context, _ int64, status string) error {
+	f.finishStatuses = append(f.finishStatuses, status)
+	return nil
+}
 func (f *fakeStore) SaveService(_ context.Context, _ int64, s domain.Service) error {
+	if f.saveServiceErr != nil {
+		return f.saveServiceErr
+	}
 	f.services = append(f.services, s)
 	return nil
 }

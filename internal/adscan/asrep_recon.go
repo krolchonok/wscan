@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// Conservative built-in principals give black-box reconnaissance a useful
+// Kerberos identity baseline when anonymous LDAP and SAMR are unavailable.
+// They are usernames only: no password or authentication attempt is made.
+var kerberosBaselineUsers = []string{"administrator", "guest", "krbtgt"}
+
 // ASREPReconOptions groups collected names by realm and chooses one discovered
 // KDC per realm. DNS records never introduce hosts outside the selected scope.
 // Missing identities/names are explicit skips, never a negative vulnerability result.
@@ -39,13 +44,11 @@ func ASREPReconOptions(result Result) ([]AccessOptions, []string) {
 	}
 	for _, realm := range realms {
 		group := groups[realm]
-		group.hosts, group.users = uniqueSorted(group.hosts), uniqueSorted(group.users)
+		group.hosts = uniqueSorted(group.hosts)
+		group.users = append(group.users, kerberosBaselineUsers...)
+		group.users = uniqueSorted(group.users)
 		if len(group.hosts) == 0 {
 			skipped = append(skipped, "AS-REP пропущен: "+realm+" — в области нет обнаруженного KDC TCP/88.")
-			continue
-		}
-		if len(group.users) == 0 {
-			skipped = append(skipped, "AS-REP пропущен: "+realm+" — имена пользователей не собраны; можно указать список в меню Kerberos.")
 			continue
 		}
 		out = append(out, AccessOptions{Mode: "asrep", Host: group.hosts[0], Domain: realm, Users: group.users, MaxObjects: 5000})

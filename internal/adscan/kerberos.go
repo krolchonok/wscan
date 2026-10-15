@@ -293,11 +293,11 @@ func probeASREP(ctx context.Context, address, realm, user string, beforeSend ...
 			case errorcode.KDC_ERR_ETYPE_NOSUPP:
 				continue
 			case errorcode.KDC_ERR_PREAUTH_REQUIRED:
-				return "negative", "KDC требует pre-auth; AS-REP без пароля не выдан", nil
+				return "valid", "KDC подтвердил пользователя и требует pre-auth; AS-REP без пароля не выдан", nil
 			case errorcode.KDC_ERR_C_PRINCIPAL_UNKNOWN:
 				return "negative", "KDC: пользователь не найден в этом домене", nil
 			case errorcode.KDC_ERR_CLIENT_REVOKED:
-				return "denied", "KDC: учётная запись отключена или заблокирована", nil
+				return "valid-disabled", "KDC подтвердил пользователя; учётная запись отключена, заблокирована или отозвана", nil
 			default:
 				return "", "", kerr
 			}

@@ -53,6 +53,7 @@ func asrepReportFindings(report adscan.AccessReport) []domain.Finding {
 	// pre-auth/account-not-found replies remain in a compact coverage summary.
 	var out []domain.Finding
 	negative, denied, confirmed := 0, 0, 0
+	var valid, disabled []string
 	endpoint := report.Endpoint
 	if endpoint == "" {
 		endpoint = "tcp://" + net.JoinHostPort(report.Host, "88")
@@ -64,6 +65,12 @@ func asrepReportFindings(report adscan.AccessReport) []domain.Finding {
 			attempted++
 		}
 		switch check.State {
+		case "valid":
+			valid = append(valid, strings.TrimPrefix(check.ID, "asrep/"))
+			continue
+		case "valid-disabled":
+			disabled = append(disabled, strings.TrimPrefix(check.ID, "asrep/"))
+			continue
 		case "negative":
 			negative++
 			continue
@@ -83,7 +90,17 @@ func asrepReportFindings(report adscan.AccessReport) []domain.Finding {
 		out = append(out, f)
 	}
 	if len(report.Checks) > 0 {
-		out = append(out, domain.Finding{TemplateID: "ad-access/asrep-summary", Name: "Проверено AS-REP без пароля", Severity: "info", Target: report.Host, MatchedAt: endpoint, Protocol: "kerberos", MatcherName: "observed", Evidence: fmt.Sprintf("Проверено имён: %d · AS-REP: %d · отрицательные ответы: %d · отказ KDC: %d · ошибки: %d", attempted, confirmed, negative, denied, errors), Time: time.Now().UTC()})
+		out = append(out, domain.Finding{TemplateID: "ad-access/asrep-summary", Name: "Kerberos user-enum и AS-REP без пароля", Severity: "info", Target: report.Host, MatchedAt: endpoint, Protocol: "kerberos", MatcherName: "observed", Evidence: fmt.Sprintf("Проверено имён: %d · существующие с pre-auth: %d · отключённые/заблокированные: %d · AS-REP: %d · не существуют: %d · прочий отказ KDC: %d · ошибки: %d", attempted, len(valid), len(disabled), confirmed, negative, denied, errors), Time: time.Now().UTC()})
+	}
+	if len(valid)+len(disabled) > 0 {
+		parts := make([]string, 0, 2)
+		if len(valid) > 0 {
+			parts = append(parts, "существуют и требуют pre-auth: "+strings.Join(valid, ", "))
+		}
+		if len(disabled) > 0 {
+			parts = append(parts, "существуют, но отключены/заблокированы: "+strings.Join(disabled, ", "))
+		}
+		out = append(out, domain.Finding{TemplateID: "ad-access/kerberos-users", Name: "Kerberos подтвердил имена пользователей", Severity: "info", Target: report.Host, MatchedAt: endpoint, Protocol: "kerberos", MatcherName: "observed", Evidence: strings.Join(parts, "\n"), Risk: "Проверка различий ответов KDC без пароля; успешный вход не выполнялся.", Time: time.Now().UTC()})
 	}
 	if len(report.Artifacts) > 0 {
 		out = append(out, domain.Finding{TemplateID: "ad-access/asrep-artifacts", Name: "Артефакты AS-REP", Severity: "info", Target: report.Host, MatchedAt: endpoint, Protocol: "kerberos", Evidence: strings.Join(report.Artifacts, "\n"), Time: time.Now().UTC()})

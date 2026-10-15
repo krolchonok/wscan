@@ -40,8 +40,8 @@ type FileUploadProgress struct {
 }
 type FileUploadResult struct {
 	Forms, Fields, Done, Total, Errors int
-	Hits                                []FileUploadHit
-	Limitation                          string
+	Hits                               []FileUploadHit
+	Limitation                         string
 }
 
 const (
@@ -84,6 +84,9 @@ func parseUploadForms(base *url.URL, body []byte) []uploadForm {
 			}
 		}
 		if action.Scheme != "http" && action.Scheme != "https" {
+			continue
+		}
+		if !sameWebOrigin(base, action) {
 			continue
 		}
 		form := uploadForm{Action: action, Values: map[string]string{}}
@@ -320,7 +323,7 @@ collect:
 		seen := map[string]bool{}
 		add := func(raw string) {
 			parsed, err := base.Parse(raw)
-			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || !sameWebOrigin(base, parsed) {
 				return
 			}
 			s := parsed.String()
