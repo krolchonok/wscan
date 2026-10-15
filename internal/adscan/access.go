@@ -291,7 +291,7 @@ func directoryAccess(ctx context.Context, o AccessOptions) (AccessReport, error)
 		id, name, base, filter string
 		attrs                  []string
 	}{
-		{"users", "Пользователи", base, "(&(objectCategory=person)(objectClass=user))", []string{"sAMAccountName", "userAccountControl", "servicePrincipalName", "pwdLastSet", "lastLogonTimestamp", "adminCount", "memberOf", "msDS-ResultantPSO"}},
+		{"users", "Пользователи", base, "(&(objectCategory=person)(objectClass=user))", []string{"sAMAccountName", "userPrincipalName", "displayName", "givenName", "sn", "description", "mail", "title", "department", "userAccountControl", "servicePrincipalName", "pwdLastSet", "lastLogonTimestamp", "adminCount", "memberOf", "msDS-ResultantPSO"}},
 		{"computers", "Компьютеры / pre2k", base, "(objectClass=computer)", []string{"sAMAccountName", "userAccountControl", "dNSHostName", "pwdLastSet", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity"}},
 		{"policy", "Парольные политики", base, "(|(objectClass=domainDNS)(objectClass=msDS-PasswordSettings))", passwordPolicyAttributes},
 		{"delegation", "Делегирование", base, "(|(msDS-AllowedToDelegateTo=*)(msDS-AllowedToActOnBehalfOfOtherIdentity=*)(userAccountControl:1.2.840.113556.1.4.803:=524288))", []string{"sAMAccountName", "userAccountControl", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity"}},

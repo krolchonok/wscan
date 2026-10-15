@@ -45,10 +45,13 @@ type ScriptResult struct {
 type Config struct {
 	SelectedServicesOnly bool
 	Complete             bool
-	Timeout              time.Duration // Per network operation.
-	ScriptTimeout        time.Duration // Total budget for one script across all selected ports.
-	RPS                  int
-	Args                 map[string]string
+	// Verbosity mirrors nmap -v for scripts which intentionally hide detailed
+	// records at the default level (for example smb-enum-users.nse).
+	Verbosity     int
+	Timeout       time.Duration // Per network operation.
+	ScriptTimeout time.Duration // Total budget for one script across all selected ports.
+	RPS           int
+	Args          map[string]string
 }
 
 // DefaultBruteArgs derives nmap's brute-force safety script-args

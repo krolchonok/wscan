@@ -54,9 +54,12 @@ func (r *Runner) registerModules(L *lua.LState, ctrl *control, scriptID string) 
 		"get_ports":        nmapGetPorts,
 		"set_port_version": noop,
 		"port_is_excluded": constFalse,
-		"verbosity":        constZero,
-		"debugging":        constZero,
-		"timing_level":     func(L *lua.LState) int { L.Push(lua.LNumber(3)); return 1 },
+		"verbosity": func(L *lua.LState) int {
+			L.Push(lua.LNumber(max(0, r.cfg.Verbosity)))
+			return 1
+		},
+		"debugging":    constZero,
+		"timing_level": func(L *lua.LState) int { L.Push(lua.LNumber(3)); return 1 },
 		"condvar": func(L *lua.LState) int {
 			L.RaiseError("NSE coroutine scheduler is not supported by the native engine")
 			return 0
